@@ -1,5 +1,5 @@
 [package]
-name = "xpbdcloth"
+name = "xpbdrs"
 description = "An implementation of Extended Position Based Dynamics for cloth simulation in Rust."
 version = "0.1.0"
 edition = "2024"

@@ -6,6 +6,7 @@ use crate::mesh::{Edge, Tetrahedron, Vertex, VertexId};
 use raylib::math::Vector3;
 
 /// The value and gradient of an n-ary constraint.
+#[derive(Debug)]
 pub struct ValueGrad<const ARITY: usize> {
     /// Contraint value.
     pub value: f32,
@@ -17,9 +18,12 @@ pub struct ValueGrad<const ARITY: usize> {
 
 /// Trait for a general constraint with `ARITY` participants.
 pub trait Constraint<const ARITY: usize> {
+    /// Evaluate this constraint and obtain the corresponding value.
     fn value<V>(&self, vertices: &V) -> f32
     where
         V: Index<VertexId, Output = Vertex>;
+
+    /// Evaluate this constraint and obtain both the value and gradient.
     fn value_and_grad<V>(&self, vertices: &V) -> ValueGrad<ARITY>
     where
         V: Index<VertexId, Output = Vertex>;

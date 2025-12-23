@@ -140,7 +140,9 @@ fn load_mesh(mesh_path: &str) -> Option<mesh::Tetrahedral> {
 
 const TARGET_FPS: u16 = 60;
 const TIME_STEP: f32 = 1.0 / TARGET_FPS as f32;
-const N_SUBSTEPS: usize = 3;
+const N_SUBSTEPS: usize = 10;
+const EDGE_STIFFNESS: f32 = 0.00;
+const VOLUME_STIFFNESS: f32 = 0.00;
 
 #[instrument]
 fn run_simulation(mesh_path: Option<&str>) {
@@ -158,9 +160,9 @@ fn run_simulation(mesh_path: Option<&str>) {
     rl.set_target_fps(TARGET_FPS.into());
 
     let initial_values = mesh.as_ref().map(xpbd::evaluate_tet_constraints);
-    let mut state = mesh
-        .as_ref()
-        .map(|m| XpbdState::new(m.vertices.len(), N_SUBSTEPS, TIME_STEP));
+    let xpbd_params =
+        xpbd::XpbdParams::new(N_SUBSTEPS, TIME_STEP, EDGE_STIFFNESS, VOLUME_STIFFNESS);
+    let mut state = mesh.as_ref().map(|m| XpbdState::new(m.vertices.len()));
 
     while !rl.window_should_close() {
         handle_input(&rl, &mut show_wireframe, &mut show_faces);
@@ -169,6 +171,7 @@ fn run_simulation(mesh_path: Option<&str>) {
         if let Some(mesh) = &mut mesh {
             let current_state = state.take().unwrap();
             state = Some(xpbd::step_basic(
+                &xpbd_params,
                 current_state,
                 mesh,
                 initial_values.as_ref().unwrap(),

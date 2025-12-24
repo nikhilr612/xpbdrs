@@ -162,14 +162,13 @@ fn run_simulation(mesh_path: Option<&str>) {
     rl.set_target_fps(TARGET_FPS.into());
 
     let initial_values = mesh.as_ref().map(xpbd::evaluate_tet_constraints);
-    let xpbd_params = xpbd::XpbdParams::new(
-        N_SUBSTEPS,
-        TIME_STEP,
-        EDGE_STIFFNESS,
-        VOLUME_STIFFNESS,
-        f32::INFINITY, // no threshold for now
-        f32::INFINITY, // no threshold for now
-    );
+    let xpbd_params = xpbd::XpbdParams {
+        n_substeps: N_SUBSTEPS,
+        time_substep: TIME_STEP / (N_SUBSTEPS as f32),
+        stiffness_length: EDGE_STIFFNESS,
+        stiffness_volume: VOLUME_STIFFNESS,
+        ..Default::default()
+    };
     let mut state = mesh
         .as_ref()
         .map(|m| XpbdState::new(m.vertices.len(), m.edges.len() + m.tetrahedra.len()));
@@ -185,6 +184,7 @@ fn run_simulation(mesh_path: Option<&str>) {
                 current_state,
                 mesh,
                 initial_values.as_ref().unwrap(),
+                |v| v.position.y = v.position.y.max(0.0), // ground at y=0
             ));
         }
 

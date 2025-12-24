@@ -22,36 +22,31 @@ pub struct XpbdState {
 #[derive(Clone, Debug)]
 pub struct XpbdParams {
     /// Stiffness for edge length constraints.
-    stiffness_volume: f32,
+    pub stiffness_volume: f32,
     /// Stiffness for tetrahedral volume constraints.
-    stiffness_length: f32,
+    pub stiffness_length: f32,
     /// Number of substeps per simulation step.
-    n_substeps: usize,
+    pub n_substeps: usize,
     /// Time step for each simulation substep.
-    time_substep: f32,
+    pub time_substep: f32,
     /// Length constraint force-threshold for deactivation.
-    l_threshold_length: f32,
+    pub l_threshold_length: f32,
     /// Volume constraint force-threshold for deactivation.
-    l_threshold_volume: f32,
+    pub l_threshold_volume: f32,
+    /// A constant acceleration applied to all vertices (e.g., gravity).
+    pub constant_field: Vector3,
 }
 
-impl XpbdParams {
-    /// Create new XPBD parameters.
-    pub fn new(
-        n_substeps: usize,
-        time_step: f32,
-        stiffness_length: f32,
-        stiffness_volume: f32,
-        l_threshold_length: f32,
-        l_threshold_volume: f32,
-    ) -> Self {
+impl Default for XpbdParams {
+    fn default() -> Self {
         Self {
-            stiffness_length,
-            stiffness_volume,
-            n_substeps,
-            time_substep: time_step / n_substeps as f32,
-            l_threshold_length,
-            l_threshold_volume,
+            stiffness_length: 0.0,
+            stiffness_volume: 0.0,
+            n_substeps: 10,
+            time_substep: 0.016 / 10.0,
+            l_threshold_length: f32::INFINITY,
+            l_threshold_volume: f32::INFINITY,
+            constant_field: Vector3::new(0.0, -0.981, 0.0),
         }
     }
 }
@@ -109,12 +104,18 @@ where
 }
 
 // TODO: Implement more generic Xpbd function.
-pub fn step_basic(
+/// Basic XPBD step function for tetrahedral meshes.
+/// Additionally accepts a vertex correction function to handle collisions and other vertex corrections that need to be applied after the kinematic update.
+pub fn step_basic<F>(
     params: &XpbdParams,
     state: XpbdState,
     mesh: &mut Tetrahedral,
     initial_value: &TetConstraintValues,
-) -> XpbdState {
+    mut vertex_correction: F,
+) -> XpbdState
+where
+    F: FnMut(&mut Vertex),
+{
     let XpbdState {
         mut velocities,
         mut inactive_constraints,
@@ -126,18 +127,16 @@ pub fn step_basic(
         time_substep,
         l_threshold_length,
         l_threshold_volume,
+        constant_field,
     } = params.clone();
     for _ in 0..n_substeps {
         // copy old positions each time.
         let old_positions = mesh.vertices.clone();
-        let gravity = Vector3::new(0.0, -0.1, 0.0);
 
         for (i, vertex) in mesh.vertices.iter_mut().enumerate() {
-            velocities[i] += gravity * time_substep; // unit mass for now
+            velocities[i] += constant_field * time_substep; // unit mass for now
             vertex.position += velocities[i] * time_substep;
-            if vertex.position.y < 0.0 {
-                vertex.position.y = 0.0;
-            }
+            vertex_correction(vertex);
         }
 
         let mut constraint_index = 0;

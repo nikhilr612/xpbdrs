@@ -54,7 +54,6 @@ where
         let vertex = &mut vertices[vertex_id];
         vertex.position += grad * vertex.inv_mass * lambda;
     }
-
     lambda
 }
 

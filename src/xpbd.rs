@@ -5,7 +5,7 @@ use std::ops::IndexMut;
 use raylib::math::Vector3;
 
 use crate::{
-    constraint::{Constraint, ValueGrad, apply_constraint_uniform},
+    constraint::{Constraint, ValueGrad, apply_constraint},
     mesh::{Tetrahedral, Vertex, VertexId},
 };
 
@@ -99,7 +99,7 @@ pub fn step_basic(
         for (edge, &ref_length) in mesh.edges.iter().zip(initial_value.lengths.iter()) {
             let result = edge.value_and_grad(&mesh.vertices);
             let alpha = stiffness_length / (time_substep * time_substep);
-            apply_constraint_uniform(result, ref_length, alpha, &mut mesh.vertices);
+            apply_constraint(result, ref_length, alpha, &mut mesh.vertices);
         }
 
         for (i, tetrahedron) in mesh.tetrahedra.iter().enumerate() {
@@ -109,7 +109,7 @@ pub fn step_basic(
                 .expect("Tetrahedron should have an initial volume.");
             let result = tetrahedron.value_and_grad(&mesh.vertices);
             let alpha = stiffness_volume / (time_substep * time_substep);
-            apply_constraint_uniform(result, ref_volume, alpha, &mut mesh.vertices);
+            apply_constraint(result, ref_volume, alpha, &mut mesh.vertices);
         }
 
         // Update velocities based on position changes

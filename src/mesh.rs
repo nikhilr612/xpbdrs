@@ -6,9 +6,15 @@ use std::io::{BufRead, BufReader};
 use std::ops::{Index, IndexMut};
 use std::path::Path;
 
+fn default_inv_mass() -> f32 {
+    1.0
+}
+
 #[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Vertex {
     pub position: Vector3,
+    #[serde(default = "default_inv_mass")]
+    pub inv_mass: f32,
 }
 
 #[derive(Clone, Debug, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -84,6 +90,7 @@ impl Tetrahedral {
                 .collect::<Result<_>>()?;
             Ok(Vertex {
                 position: Vector3::new(coords[0], coords[1], coords[2]),
+                inv_mass: 1.0,
             })
         })?;
 

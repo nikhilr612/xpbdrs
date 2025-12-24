@@ -29,22 +29,33 @@ pub trait Constraint<const ARITY: usize> {
         V: Index<VertexId, Output = Vertex>;
 }
 
-/// Apply a constraint correction with uniform inverse mass to all participants.
-pub fn apply_constraint_uniform<const N: usize, V>(
+/// Apply constraint correction to all participants.
+/// Returns the computed Lagrange multiplier.
+pub fn apply_constraint<const N: usize, V>(
     vag: ValueGrad<N>,
     reference_value: f32,
     alpha: f32,
     vertices: &mut V,
-) where
+) -> f32
+where
     V: IndexMut<VertexId, Output = Vertex>,
 {
     let lambda = (reference_value - vag.value)
-        / (alpha + vag.grad.into_iter().map(|g| g.dot(g)).sum::<f32>());
+        / (alpha
+            + vag
+                .grad
+                .into_iter()
+                .zip(vag.participants.iter())
+                .map(|(g, &v)| vertices[v].inv_mass * (g.dot(g)))
+                .sum::<f32>());
+
     for (i, vertex_id) in vag.participants.into_iter().enumerate() {
         let grad = vag.grad[i];
         let vertex = &mut vertices[vertex_id];
-        vertex.position += grad * lambda;
+        vertex.position += grad * vertex.inv_mass * lambda;
     }
+
+    lambda
 }
 
 /// Binary edge constraint.
@@ -152,7 +163,13 @@ mod tests {
         }
 
         fn insert(&mut self, id: VertexId, position: Vector3) {
-            self.vertices.insert(id, Vertex { position });
+            self.vertices.insert(
+                id,
+                Vertex {
+                    position,
+                    inv_mass: 1.0,
+                },
+            );
         }
     }
 

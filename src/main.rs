@@ -96,12 +96,35 @@ fn setup_camera(mesh: Option<&mesh::Tetrahedral>) -> (Vector3, Vector3) {
     )
 }
 
-fn handle_input(rl: &RaylibHandle, show_wireframe: &mut bool, show_faces: &mut bool) {
-    if rl.is_key_pressed(KeyboardKey::KEY_W) {
+fn handle_input(
+    rl: &RaylibHandle,
+    show_wireframe: &mut bool,
+    show_faces: &mut bool,
+    should_reset: &mut bool,
+    camera: &mut Camera3D,
+) {
+    if rl.is_key_pressed(KeyboardKey::KEY_X) {
         *show_wireframe = !*show_wireframe;
     }
     if rl.is_key_pressed(KeyboardKey::KEY_F) {
         *show_faces = !*show_faces;
+    }
+    if rl.is_key_pressed(KeyboardKey::KEY_R) {
+        *should_reset = true;
+    }
+
+    // Camera Y-axis movement
+    const CAMERA_SPEED: f32 = 0.1;
+    if rl.is_key_down(KeyboardKey::KEY_SPACE) {
+        // Space: Move camera up
+        camera.position.y += CAMERA_SPEED;
+        camera.target.y += CAMERA_SPEED;
+    } else if rl.is_key_down(KeyboardKey::KEY_LEFT_SHIFT)
+        || rl.is_key_down(KeyboardKey::KEY_RIGHT_SHIFT)
+    {
+        // Shift: Move camera down
+        camera.position.y -= CAMERA_SPEED;
+        camera.target.y -= CAMERA_SPEED;
     }
 }
 
@@ -113,17 +136,20 @@ fn draw_mesh(
     show_faces: bool,
 ) {
     if show_faces {
-        mesh.draw_faces(d3, state, Color::LIGHTGRAY.alpha(0.7));
+        mesh.draw_faces(d3, state, Color::new(255, 215, 0, 200)); // Gold with transparency
     }
     if show_wireframe {
-        mesh.draw_wireframe(d3, Color::BLUE);
+        mesh.draw_wireframe(d3, Color::new(30, 144, 255, 255)); // Dodger blue
     }
 }
 
 fn draw_ui(d: &mut RaylibDrawHandle) {
     d.draw_fps(10, 10);
-    d.draw_text("W: Toggle Wireframe", 10, 40, 20, Color::WHITE);
-    d.draw_text("F: Toggle Faces", 10, 60, 20, Color::WHITE);
+    d.draw_text("X: Wireframe", 10, 40, 15, Color::BLACK);
+    d.draw_text("F: Faces", 10, 60, 15, Color::BLACK);
+    d.draw_text("R: Reset", 10, 80, 15, Color::BLACK);
+    d.draw_text("Space: Camera Up", 10, 100, 15, Color::BLACK);
+    d.draw_text("Shift: Camera Down", 10, 120, 15, Color::BLACK);
 }
 
 #[instrument]
@@ -154,8 +180,10 @@ const VOLUME_COMPLIANCE: f32 = 0.00;
 #[instrument]
 fn run_simulation(mesh_path: Option<&str>) {
     let mut mesh = mesh_path.and_then(load_mesh);
+    let original_mesh = mesh.clone();
     let mut show_wireframe = true;
     let mut show_faces = false;
+    let mut should_reset = false;
 
     let (mut rl, thread) = raylib::init()
         .size(800, 600)
@@ -182,8 +210,28 @@ fn run_simulation(mesh_path: Option<&str>) {
     });
 
     while !rl.window_should_close() {
-        handle_input(&rl, &mut show_wireframe, &mut show_faces);
+        handle_input(
+            &rl,
+            &mut show_wireframe,
+            &mut show_faces,
+            &mut should_reset,
+            &mut camera,
+        );
         rl.update_camera(&mut camera, CameraMode::CAMERA_THIRD_PERSON);
+
+        // Reset simulation if space was pressed
+        if should_reset {
+            if let Some(original) = &original_mesh {
+                mesh = Some(original.clone());
+                if let Some(mesh) = &mesh {
+                    state = Some(XpbdState::new(
+                        mesh.vertices.len(),
+                        mesh.constraints.edges.len() + mesh.constraints.tetrahedra.len(),
+                    ));
+                }
+            }
+            should_reset = false;
+        }
 
         if let Some(mesh) = &mut mesh {
             let current_state = state.take().unwrap();
@@ -197,16 +245,23 @@ fn run_simulation(mesh_path: Option<&str>) {
         }
 
         let mut d = rl.begin_drawing(&thread);
-        d.clear_background(Color::RAYWHITE);
+        d.clear_background(Color::new(205, 206, 245, 255)); // Light blue sky
 
         {
             let mut d3 = d.begin_mode3D(camera);
 
-            // Always draw ground plane and grid
+            // Draw large white floor plane
+            d3.draw_plane(
+                Vector3::new(0.0, -0.1, 0.0),
+                Vector2::new(50.0, 50.0),
+                Color::new(248, 248, 255, 255), // Ghost white
+            );
+
+            // Always draw ground plane and grid with better contrast
             d3.draw_plane(
                 Vector3::new(0.0, 0.0, 0.0),
                 Vector2::new(10.0, 10.0),
-                Color::GRAY,
+                Color::new(180, 180, 180, 255), // Light gray
             );
             d3.draw_grid(20, 2.0);
 

@@ -190,10 +190,15 @@ impl Tetrahedral {
         mesh
     }
 
-    /// Draw wireframe of the mesh.
-    pub fn draw_wireframe(&self, d3: &mut RaylibMode3D<RaylibDrawHandle>, color: Color) {
-        // Draw explicit edges if available
-        for edge in &self.constraints.edges {
+    /// Draw wireframe of the mesh, skipping broken/inactive edges.
+    pub fn draw_wireframe(&self, d3: &mut RaylibMode3D<RaylibDrawHandle>, state: &XpbdState, color: Color) {
+        // Draw explicit edges if available, skip inactive (broken) constraints
+        for (edge_idx, edge) in self.constraints.edges.iter().enumerate() {
+            // Skip broken edges
+            if state.constraint_inactive(edge_idx) {
+                continue;
+            }
+            
             if let (Some(v1), Some(v2)) = (
                 self.vertices.get((edge.0.0 - 1) as usize),
                 self.vertices.get((edge.1.0 - 1) as usize),
@@ -212,21 +217,21 @@ impl Tetrahedral {
         state: &XpbdState,
         color: Color,
     ) {
-        for face in &self.faces {
+        for (face_idx, face) in self.faces.iter().enumerate() {
             let verts = [
                 self.vertices[(face.verts[0].0 - 1) as usize],
                 self.vertices[(face.verts[1].0 - 1) as usize],
                 self.vertices[(face.verts[2].0 - 1) as usize],
             ];
 
-            // A triangle is "torn" if any of its corresponding edge constraints are inactive.
-            let torn = face
+            // Check if this face is torn (either explicitly or via broken edge constraints)
+            let has_broken_edge = face
                 .edges
                 .iter()
-                .filter_map(|e| e.as_ref()) // Only check edges that have constraints
-                .any(|e| state.constraint_inactive(e.0 as usize)); // in this constraint set, edges are solved first, so base index is 0.
-
-            if !torn {
+                .filter_map(|e| e.as_ref())
+                .any(|e| state.constraint_inactive(e.0 as usize));
+            
+            if !state.face_torn(face_idx) && !has_broken_edge {
                 d3.draw_triangle3D(
                     verts[0].position,
                     verts[1].position,
@@ -236,7 +241,83 @@ impl Tetrahedral {
             }
         }
     }
-}
+    /// Compute edge deformations and break springs that exceed stretch or compression thresholds.
+    ///
+    /// This function checks each edge constraint:
+    /// - If stretched beyond `stretch_threshold` (e.g., 2.5 = 250% of original length)
+    /// - If compressed beyond `compression_threshold` (e.g., 0.2 = 20% of original length)
+    ///
+    /// When broken:
+    /// 1. The edge constraint is deactivated (spring breaks - no more forces)
+    /// 2. Velocities of connected vertices are heavily dampened to prevent flying off
+    pub fn tear_edges(
+        &self,
+        state: &mut XpbdState,
+        initial_values: &TetConstraintValues,
+        stretch_threshold: f32,
+        compression_threshold: f32,
+    ) {
+        for (edge_idx, edge) in self.constraints.edges.iter().enumerate() {
+            if !state.constraint_inactive(edge_idx) {
+                // Get current edge length
+                let current_length = (self.vertices[(edge.1.0 - 1) as usize].position
+                    - self.vertices[(edge.0.0 - 1) as usize].position)
+                    .length();
+
+                // Get original edge length
+                let original_length = initial_values.lengths[edge_idx];
+
+                // Compute stretch ratio (current / original)
+                let stretch_ratio = current_length / original_length;
+                
+                // Break if stretched too much OR compressed too much
+                let should_break = stretch_ratio > stretch_threshold || stretch_ratio < compression_threshold;
+                
+                if should_break {
+                    // Break the spring - deactivate the constraint
+                    state.deactivate_constraint(edge_idx);
+                    
+                    // Heavily dampen velocities of connected vertices to prevent flying off
+                    let v0_idx = (edge.0.0 - 1) as usize;
+                    let v1_idx = (edge.1.0 - 1) as usize;
+                    state.dampen_vertex_velocity(v0_idx, 0.0); // Stop completely
+                    state.dampen_vertex_velocity(v1_idx, 0.0);
+                }
+            }
+        }
+    }
+    
+    /// Compute edge deformations and tear faces that have edges exceeding the threshold.
+    /// (Visual-only tearing - keeps constraints active)
+    ///
+    /// This function checks each face's edges and if any edge's current length exceeds
+    /// the original length by the deformation threshold, the face is marked as torn.
+    #[allow(dead_code)]
+    pub fn tear_faces_only(&self, state: &mut XpbdState, initial_values: &TetConstraintValues, deformation_threshold: f32) {
+        for (face_idx, face) in self.faces.iter().enumerate() {
+            if !state.face_torn(face_idx) {
+                // Check each edge of this face
+                for edge_id in face.edges.iter().filter_map(|e| e.as_ref()) {
+                    let edge = &self.constraints.edges[edge_id.0 as usize];
+                    
+                    // Get current edge length
+                    let current_length = (self.vertices[(edge.1.0 - 1) as usize].position
+                        - self.vertices[(edge.0.0 - 1) as usize].position)
+                        .length();
+
+                    // Get original edge length
+                    let original_length = initial_values.lengths[edge_id.0 as usize];
+
+                    // Check if edge has been deformed beyond threshold
+                    let deformation = (current_length - original_length).max(0.0);
+                    if deformation > deformation_threshold * original_length {
+                        state.tear_face(face_idx);
+                        break; // Face is torn, no need to check other edges
+                    }
+                }
+            }
+        }
+    }}
 
 #[cfg(test)]
 mod tests {

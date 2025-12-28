@@ -3,6 +3,7 @@ use raylib::prelude::*;
 use tracing::{debug, error, info, instrument};
 
 use xpbdrs::{
+    interaction,
     mesh::{self, Spatial},
     xpbd::{self, ConstraintSet, XpbdState},
 };
@@ -145,6 +146,15 @@ fn handle_input(rl: &RaylibHandle, show_wireframe: &mut bool, show_faces: &mut b
         params.damping = (params.damping - damping_step).max(0.0);
     }
     
+    // Interaction force: 7/8 to increase/decrease
+    let force_step = 1.0;
+    if rl.is_key_pressed(KeyboardKey::KEY_SEVEN) {
+        params.interaction_force = (params.interaction_force + force_step).min(50.0);
+    }
+    if rl.is_key_pressed(KeyboardKey::KEY_EIGHT) {
+        params.interaction_force = (params.interaction_force - force_step).max(0.5);
+    }
+    
     // Gravity: 9/0 to increase/decrease magnitude
     if rl.is_key_pressed(KeyboardKey::KEY_NINE) {
         params.gravity -= gravity_step; // More negative = stronger gravity
@@ -173,7 +183,7 @@ fn draw_mesh(
         mesh.draw_faces(d3, state, Color::LIGHTGRAY.alpha(0.7));
     }
     if show_wireframe {
-        mesh.draw_wireframe(d3, Color::BLUE);
+        mesh.draw_wireframe(d3, state, Color::BLUE);
     }
 }
 
@@ -188,18 +198,20 @@ fn draw_ui(d: &mut RaylibDrawHandle, params: &SimParams, mesh: Option<&mesh::Tet
     d.draw_text("SPACE: Pause/Resume", 10, 96, 14, Color::MIDNIGHTBLUE);
     d.draw_text("R: Reset Simulation", 10, 114, 14, Color::MIDNIGHTBLUE);
     d.draw_text("T: Toggle Shuffle", 10, 132, 14, Color::MIDNIGHTBLUE);
+    d.draw_text("LMB: Push & Tear Mesh", 10, 150, 14, Color::MAROON);
     
-    d.draw_text("=== ADJUST ===", 10, 158, 16, Color::DARKGRAY);
-    d.draw_text("1/2: Length Compliance +/-", 10, 178, 14, Color::MIDNIGHTBLUE);
-    d.draw_text("3/4: Volume Compliance +/-", 10, 196, 14, Color::MIDNIGHTBLUE);
-    d.draw_text("5/6: Damping +/-", 10, 214, 14, Color::MIDNIGHTBLUE);
-    d.draw_text("9/0: Gravity +/-", 10, 232, 14, Color::MIDNIGHTBLUE);
-    d.draw_text("UP/DOWN: Substeps", 10, 250, 14, Color::MIDNIGHTBLUE);
+    d.draw_text("=== ADJUST ===", 10, 176, 16, Color::DARKGRAY);
+    d.draw_text("1/2: Length Compliance +/-", 10, 196, 14, Color::MIDNIGHTBLUE);
+    d.draw_text("3/4: Volume Compliance +/-", 10, 214, 14, Color::MIDNIGHTBLUE);
+    d.draw_text("5/6: Damping +/-", 10, 232, 14, Color::MIDNIGHTBLUE);
+    d.draw_text("7/8: Interaction Force +/-", 10, 250, 14, Color::MIDNIGHTBLUE);
+    d.draw_text("9/0: Gravity +/-", 10, 268, 14, Color::MIDNIGHTBLUE);
+    d.draw_text("UP/DOWN: Substeps", 10, 286, 14, Color::MIDNIGHTBLUE);
     
     // Right panel: Current parameter values
     let panel_x = screen_width - 220;
-    d.draw_rectangle(panel_x - 10, 30, 220, 220, Color::WHITE.alpha(0.85));
-    d.draw_rectangle_lines(panel_x - 10, 30, 220, 220, Color::DARKGRAY);
+    d.draw_rectangle(panel_x - 10, 30, 220, 280, Color::WHITE.alpha(0.85));
+    d.draw_rectangle_lines(panel_x - 10, 30, 220, 280, Color::DARKGRAY);
     
     d.draw_text("=== PARAMETERS ===", panel_x, 40, 16, Color::DARKGRAY);
     
@@ -234,12 +246,31 @@ fn draw_ui(d: &mut RaylibDrawHandle, params: &SimParams, mesh: Option<&mesh::Tet
     let shuffle_color = if params.shuffle_buffer_size == usize::MAX { Color::GREEN } else { Color::GRAY };
     d.draw_text(&format!("Shuffle:      {}", shuffle_text), panel_x, 175, 14, shuffle_color);
     
+    // Interaction parameters
+    d.draw_text("--- Interaction ---", panel_x, 200, 14, Color::DARKGRAY);
+    d.draw_text(
+        &format!("Force:        {:.1}", params.interaction_force),
+        panel_x, 218, 14, Color::MAROON
+    );
+    d.draw_text(
+        &format!("Radius:       {:.2}", params.interaction_radius),
+        panel_x, 236, 14, Color::MAROON
+    );
+    d.draw_text(
+        &format!("Stretch:      {:.0}%", params.stretch_threshold * 100.0),
+        panel_x, 254, 14, Color::MAROON
+    );
+    d.draw_text(
+        &format!("Compress:     {:.0}%", params.compression_threshold * 100.0),
+        panel_x, 272, 14, Color::MAROON
+    );
+    
     // Mesh info if available
     if let Some(m) = mesh {
-        d.draw_text("--- Mesh ---", panel_x, 200, 14, Color::DARKGRAY);
+        d.draw_text("--- Mesh ---", panel_x, 297, 14, Color::DARKGRAY);
         d.draw_text(
             &format!("Verts: {} Edges: {}", m.vertices.len(), m.constraints.edges.len()),
-            panel_x, 218, 12, Color::GRAY
+            panel_x, 315, 12, Color::GRAY
         );
     }
 }
@@ -257,7 +288,7 @@ fn load_mesh(mesh_path: &str) -> Option<mesh::Tetrahedral> {
 const TARGET_FPS: u16 = 60;
 const TIME_STEP: f32 = 1.0 / TARGET_FPS as f32;
 const N_SUBSTEPS: usize = 30;
-const EDGE_COMPLIANCE: f32 = 0.0000008;
+const EDGE_COMPLIANCE: f32 = 0.000001; // Stiffer edges for stability
 const VOLUME_COMPLIANCE: f32 = 0.00;
 
 /// Mutable simulation state for live parameter tuning.
@@ -270,6 +301,12 @@ struct SimParams {
     shuffle_buffer_size: usize,
     paused: bool,
     should_reset: bool,
+    // Interaction parameters
+    interaction_force: f32,
+    interaction_radius: f32,
+    // Tearing thresholds
+    stretch_threshold: f32,    // Max stretch ratio before breaking (e.g., 2.0 = 200%)
+    compression_threshold: f32, // Min compression ratio before breaking (e.g., 0.3 = 30%)
 }
 
 impl Default for SimParams {
@@ -277,12 +314,16 @@ impl Default for SimParams {
         Self {
             length_compliance: EDGE_COMPLIANCE,
             volume_compliance: VOLUME_COMPLIANCE,
-            damping: 0.0005,
+            damping: 0.05, // Higher damping for stability
             gravity: -9.81,
             n_substeps: N_SUBSTEPS,
             shuffle_buffer_size: usize::MAX, // Full shuffle by default
             paused: false,
             should_reset: false,
+            interaction_force: 5.0,  // Much lower force
+            interaction_radius: 0.1,
+            stretch_threshold: 2.5,      // Break when stretched to 250% of original
+            compression_threshold: 0.2,  // Break when compressed to 20% of original
         }
     }
 }
@@ -325,8 +366,12 @@ fn run_simulation(mesh_path: Option<&str>) {
         XpbdState::new(
             m.vertices.len(),
             m.constraints.edges.len() + m.constraints.tetrahedra.len(),
+            m.faces.len(),
         )
     });
+
+    // Track active interaction ray for visualization
+    let mut active_ray: Option<interaction::CylindricalRay> = None;
 
     while !rl.window_should_close() {
         handle_input(&rl, &mut show_wireframe, &mut show_faces, &mut sim_params);
@@ -340,10 +385,59 @@ fn run_simulation(mesh_path: Option<&str>) {
                     state = Some(XpbdState::new(
                         m.vertices.len(),
                         m.constraints.edges.len() + m.constraints.tetrahedra.len(),
+                        m.faces.len(),
                     ));
                 }
             }
             sim_params.should_reset = false;
+        }
+
+        // Handle mouse interaction
+        if rl.is_mouse_button_down(MouseButton::MOUSE_BUTTON_LEFT) {
+            let mouse_x = rl.get_mouse_x();
+            let mouse_y = rl.get_mouse_y();
+            let screen_width = rl.get_screen_width();
+            let screen_height = rl.get_screen_height();
+
+            // Create cylindrical ray from camera through mouse position
+            let cyl_ray = interaction::CylindricalRay::from_camera_mouse(
+                &camera,
+                screen_width,
+                screen_height,
+                mouse_x,
+                mouse_y,
+                sim_params.interaction_radius,
+            );
+
+            // Store for visualization
+            active_ray = Some(cyl_ray);
+
+            if let (Some(mesh), Some(st), Some(initial_vals), Some(ray)) = (
+                &mut mesh,
+                &mut state,
+                &initial_values,
+                &active_ray,
+            ) {
+                // Compute interaction effect
+                let effect = interaction::InteractionEffect::from_cylindrical_ray(
+                    ray,
+                    &mesh.vertices,
+                    sim_params.interaction_force,
+                );
+
+                // Apply forces to affected vertices
+                st.apply_interaction_force(&effect);
+
+                // Break springs that exceed stretch or compression thresholds
+                mesh.tear_edges(
+                    st,
+                    initial_vals,
+                    sim_params.stretch_threshold,
+                    sim_params.compression_threshold,
+                );
+            }
+        } else {
+            active_ray = None;
         }
 
         // Only step simulation if not paused
@@ -378,6 +472,44 @@ fn run_simulation(mesh_path: Option<&str>) {
             // Draw mesh if loaded
             if let (Some(mesh), Some(st)) = (&mesh, &state) {
                 draw_mesh(&mut d3, mesh, st, show_wireframe, show_faces);
+            }
+
+            // Draw interaction ray cylinder when active
+            if let Some(ray) = &active_ray {
+                let ray_length = 50.0; // Draw ray extending far into scene
+                let end_point = ray.ray.origin + ray.ray.direction * ray_length;
+                
+                // Draw cylinder as multiple rings along the ray
+                let num_segments = 20;
+                for i in 0..num_segments {
+                    let t = i as f32 / num_segments as f32;
+                    let center = ray.ray.origin + ray.ray.direction * (ray_length * t);
+                    
+                    // Draw a ring (circle) at each position
+                    // We need to find perpendicular vectors to the ray direction
+                    let up = if ray.ray.direction.y.abs() < 0.9 {
+                        Vector3::new(0.0, 1.0, 0.0)
+                    } else {
+                        Vector3::new(1.0, 0.0, 0.0)
+                    };
+                    let right = ray.ray.direction.cross(up).normalized();
+                    let actual_up = right.cross(ray.ray.direction).normalized();
+                    
+                    // Draw ring as line segments
+                    let ring_segments = 16;
+                    for j in 0..ring_segments {
+                        let angle1 = (j as f32 / ring_segments as f32) * std::f32::consts::TAU;
+                        let angle2 = ((j + 1) as f32 / ring_segments as f32) * std::f32::consts::TAU;
+                        
+                        let p1 = center + (right * angle1.cos() + actual_up * angle1.sin()) * ray.radius;
+                        let p2 = center + (right * angle2.cos() + actual_up * angle2.sin()) * ray.radius;
+                        
+                        d3.draw_line_3D(p1, p2, Color::RED.alpha(0.5));
+                    }
+                }
+                
+                // Draw center line of the ray
+                d3.draw_line_3D(ray.ray.origin, end_point, Color::YELLOW);
             }
         }
 

@@ -17,6 +17,8 @@ pub struct XpbdState {
     velocities: Vec<Vector3>,
     /// Boolean vector indicating inactive constraints by index.
     inactive_constraints: BitVec,
+    /// Boolean vector indicating torn faces by index.
+    torn_faces: BitVec,
     /// Vector to store old positions during substeps.
     position_buffer: Vec<Vector3>,
 }
@@ -32,6 +34,74 @@ impl XpbdState {
             .as_bitslice()
             .get(index)
             .is_some_and(|b| *b)
+    }
+
+    #[must_use]
+    /// Check if a face at given index is torn.
+    pub fn face_torn(&self, index: usize) -> bool {
+        self.torn_faces
+            .as_bitslice()
+            .get(index)
+            .is_some_and(|b| *b)
+    }
+
+    /// Mark a face as torn.
+    pub fn tear_face(&mut self, index: usize) {
+        if index < self.torn_faces.len() {
+            self.torn_faces.set(index, true);
+        }
+    }
+
+    /// Apply forces to vertices based on an interaction effect.
+    /// Modifies velocities directly to apply the force.
+    /// Clamps velocity magnitude to prevent instability.
+    pub fn apply_interaction_force(&mut self, effect: &crate::interaction::InteractionEffect) {
+        const MAX_VELOCITY: f32 = 10.0; // Maximum velocity magnitude
+        
+        for (vertex_idx, force) in effect.affected_vertices.iter().zip(effect.forces.iter()) {
+            self.velocities[*vertex_idx] += *force;
+            
+            // Clamp velocity magnitude
+            let vel = &mut self.velocities[*vertex_idx];
+            let speed = vel.length();
+            if speed > MAX_VELOCITY {
+                *vel = *vel * (MAX_VELOCITY / speed);
+            }
+        }
+    }
+
+    /// Mark a constraint as inactive (torn/broken).
+    pub fn deactivate_constraint(&mut self, index: usize) {
+        if index < self.inactive_constraints.len() {
+            self.inactive_constraints.set(index, true);
+        }
+    }
+
+    /// Dampen velocity of a specific vertex (used when edges break).
+    pub fn dampen_vertex_velocity(&mut self, vertex_idx: usize, factor: f32) {
+        if vertex_idx < self.velocities.len() {
+            self.velocities[vertex_idx] *= factor;
+        }
+    }
+    
+    /// Clamp all velocities to a maximum magnitude for stability.
+    pub fn clamp_velocities(&mut self, max_speed: f32) {
+        for vel in &mut self.velocities {
+            let speed = vel.length();
+            if speed > max_speed {
+                *vel = *vel * (max_speed / speed);
+            }
+        }
+    }
+
+    /// Get the velocities vector (for computing edge deformations).
+    pub fn velocities(&self) -> &[Vector3] {
+        &self.velocities
+    }
+
+    /// Get mutable access to velocities.
+    pub fn velocities_mut(&mut self) -> &mut [Vector3] {
+        &mut self.velocities
     }
 }
 
@@ -86,11 +156,12 @@ impl Default for XpbdParams {
 impl XpbdState {
     /// Initialize the XPBD state with given number of vertices, substeps, and time step.
     #[must_use]
-    pub fn new(n_vertices: usize, n_constraints: usize) -> Self {
+    pub fn new(n_vertices: usize, n_constraints: usize, n_faces: usize) -> Self {
         Self {
             velocities: vec![Vector3::zero(); n_vertices],
             position_buffer: vec![Vector3::zero(); n_vertices],
             inactive_constraints: BitVec::repeat(false, n_constraints),
+            torn_faces: BitVec::repeat(false, n_faces),
         }
     }
 }

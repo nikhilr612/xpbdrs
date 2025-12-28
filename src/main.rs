@@ -97,7 +97,7 @@ fn setup_camera(mesh: Option<&mesh::Tetrahedral>) -> (Vector3, Vector3) {
 }
 
 fn handle_input(rl: &RaylibHandle, show_wireframe: &mut bool, show_faces: &mut bool, params: &mut SimParams) {
-    if rl.is_key_pressed(KeyboardKey::KEY_R) {
+    if rl.is_key_pressed(KeyboardKey::KEY_X) {
         *show_wireframe = !*show_wireframe;
     }
     if rl.is_key_pressed(KeyboardKey::KEY_F) {
@@ -108,7 +108,7 @@ fn handle_input(rl: &RaylibHandle, show_wireframe: &mut bool, show_faces: &mut b
         params.paused = !params.paused;
     }
     // Reset simulation
-    if rl.is_key_pressed(KeyboardKey::KEY_X) {
+    if rl.is_key_pressed(KeyboardKey::KEY_R) {
         params.should_reset = true;
     }
     // Toggle shuffle mode (full shuffle vs no shuffle)
@@ -183,10 +183,10 @@ fn draw_ui(d: &mut RaylibDrawHandle, params: &SimParams, mesh: Option<&mesh::Tet
     // Left panel: Controls help
     d.draw_fps(10, 10);
     d.draw_text("=== CONTROLS ===", 10, 40, 16, Color::DARKGRAY);
-    d.draw_text("R: Toggle Wireframe", 10, 60, 14, Color::MIDNIGHTBLUE);
+    d.draw_text("X: Toggle Wireframe", 10, 60, 14, Color::MIDNIGHTBLUE);
     d.draw_text("F: Toggle Faces", 10, 78, 14, Color::MIDNIGHTBLUE);
     d.draw_text("SPACE: Pause/Resume", 10, 96, 14, Color::MIDNIGHTBLUE);
-    d.draw_text("X: Reset Simulation", 10, 114, 14, Color::MIDNIGHTBLUE);
+    d.draw_text("R: Reset Simulation", 10, 114, 14, Color::MIDNIGHTBLUE);
     d.draw_text("T: Toggle Shuffle", 10, 132, 14, Color::MIDNIGHTBLUE);
     
     d.draw_text("=== ADJUST ===", 10, 158, 16, Color::DARKGRAY);

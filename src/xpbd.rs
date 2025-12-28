@@ -61,6 +61,9 @@ pub struct XpbdParams {
     pub shuffle_buffer_size: usize,
     /// Constant acceleration field applied to all vertices (e.g., gravity).
     pub constant_field: Vector3,
+    /// Scalar factor applied to all reference volumes.
+    /// When set > 1.0, this indicates that the mesh should inflate, and when set < 1.0, the mesh should deflate.
+    pub p_volume: f32,
 }
 
 impl Default for XpbdParams {
@@ -75,6 +78,7 @@ impl Default for XpbdParams {
             l_threshold_volume: f32::INFINITY,
             shuffle_buffer_size: usize::MAX, // Full shuffle by default
             constant_field: Vector3::new(0.0, -9.81, 0.0), // Default gravity
+            p_volume: 1.0,
         }
     }
 }

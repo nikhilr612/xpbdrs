@@ -156,11 +156,125 @@ impl std::ops::IndexMut<VertexId> for Vec<Vertex> {
     }
 }
 
-/// Common trait for mesh types providing core mesh operations.
-pub trait Mesh {
-    /// Translate the entire mesh by a vector.
+/// A convenience trait to aggregate "spatial" operations on collections of vertices.
+/// This trait is not intended to be replete with all possible spatial operations, but is instead a conservative interface.
+pub trait Spatial {
+    /// Translate all vertices by a vector.
     fn translate(&mut self, by: Vector3);
 
-    /// Get bounding box of the mesh as (min, max) corners.
+    /// Get bounding box of the vertices as (min, max) corners.
     fn bounding_box(&self) -> (Vector3, Vector3);
+}
+
+impl Spatial for Vec<Vertex> {
+    fn translate(&mut self, by: Vector3) {
+        for vertex in self {
+            vertex.position += by;
+        }
+    }
+
+    fn bounding_box(&self) -> (Vector3, Vector3) {
+        if self.is_empty() {
+            return (Vector3::zero(), Vector3::zero());
+        }
+
+        let mut min = Vector3::new(f32::INFINITY, f32::INFINITY, f32::INFINITY);
+        let mut max = Vector3::new(f32::NEG_INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY);
+
+        for vertex in self {
+            min.x = min.x.min(vertex.position.x);
+            min.y = min.y.min(vertex.position.y);
+            min.z = min.z.min(vertex.position.z);
+            max.x = max.x.max(vertex.position.x);
+            max.y = max.y.max(vertex.position.y);
+            max.z = max.z.max(vertex.position.z);
+        }
+
+        (min, max)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_spatial_translate() {
+        let mut vertices = vec![
+            Vertex {
+                position: Vector3::new(0.0, 0.0, 0.0),
+                inv_mass: 1.0,
+            },
+            Vertex {
+                position: Vector3::new(1.0, 2.0, 3.0),
+                inv_mass: 0.5,
+            },
+        ];
+
+        let translation = Vector3::new(10.0, 20.0, 30.0);
+        let original_positions: Vec<_> = vertices.iter().map(|v| v.position).collect();
+
+        vertices.translate(translation);
+
+        for (i, vertex) in vertices.iter().enumerate() {
+            let expected = original_positions[i] + translation;
+            assert!((vertex.position.x - expected.x).abs() < f32::EPSILON);
+            assert!((vertex.position.y - expected.y).abs() < f32::EPSILON);
+            assert!((vertex.position.z - expected.z).abs() < f32::EPSILON);
+        }
+    }
+
+    #[test]
+    fn test_spatial_bounding_box() {
+        let vertices = vec![
+            Vertex {
+                position: Vector3::new(-1.0, -2.0, -3.0),
+                inv_mass: 1.0,
+            },
+            Vertex {
+                position: Vector3::new(4.0, 5.0, 6.0),
+                inv_mass: 1.0,
+            },
+            Vertex {
+                position: Vector3::new(2.0, 1.0, 0.0),
+                inv_mass: 1.0,
+            },
+        ];
+
+        let (min, max) = vertices.bounding_box();
+
+        assert_eq!(min, Vector3::new(-1.0, -2.0, -3.0));
+        assert_eq!(max, Vector3::new(4.0, 5.0, 6.0));
+    }
+
+    #[test]
+    fn test_spatial_bounding_box_single_vertex() {
+        let vertices = vec![Vertex {
+            position: Vector3::new(42.0, -17.0, 99.0),
+            inv_mass: 1.0,
+        }];
+
+        let (min, max) = vertices.bounding_box();
+
+        assert_eq!(min, Vector3::new(42.0, -17.0, 99.0));
+        assert_eq!(max, Vector3::new(42.0, -17.0, 99.0));
+    }
+
+    #[test]
+    fn test_spatial_bounding_box_empty() {
+        let vertices: Vec<Vertex> = vec![];
+
+        let (min, max) = vertices.bounding_box();
+
+        assert_eq!(min, Vector3::zero());
+        assert_eq!(max, Vector3::zero());
+    }
+
+    #[test]
+    fn test_spatial_translate_empty() {
+        let mut vertices: Vec<Vertex> = vec![];
+        vertices.translate(Vector3::new(1.0, 2.0, 3.0));
+        // Should not panic and remain empty
+        assert!(vertices.is_empty());
+    }
 }

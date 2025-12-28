@@ -3,7 +3,7 @@ use raylib::prelude::*;
 use tracing::{debug, error, info, instrument};
 
 use xpbdrs::{
-    mesh::{self, Mesh},
+    mesh::{self, Spatial},
     xpbd::{self, ConstraintSet, XpbdState},
 };
 
@@ -58,7 +58,7 @@ fn setup_camera(mesh: Option<&mesh::Tetrahedral>) -> (Vector3, Vector3) {
     mesh.map_or_else(
         || (Vector3::new(7.0, 7.0, 7.0), Vector3::new(0.0, 0.0, 0.0)),
         |mesh| {
-            let (min, max) = mesh.bounding_box();
+            let (min, max) = mesh.vertices.bounding_box();
             debug!(
                 min_x = %min.x, min_y = %min.y, min_z = %min.z,
                 max_x = %max.x, max_y = %max.y, max_z = %max.z,
@@ -106,6 +106,10 @@ fn handle_input(rl: &RaylibHandle, show_wireframe: &mut bool, show_faces: &mut b
     // Pause/unpause simulation
     if rl.is_key_pressed(KeyboardKey::KEY_SPACE) {
         params.paused = !params.paused;
+    }
+    // Reset simulation
+    if rl.is_key_pressed(KeyboardKey::KEY_X) {
+        params.should_reset = true;
     }
     // Toggle shuffle mode (full shuffle vs no shuffle)
     if rl.is_key_pressed(KeyboardKey::KEY_T) {
@@ -161,11 +165,12 @@ fn handle_input(rl: &RaylibHandle, show_wireframe: &mut bool, show_faces: &mut b
 fn draw_mesh(
     d3: &mut RaylibMode3D<RaylibDrawHandle>,
     mesh: &mesh::Tetrahedral,
+    state: &XpbdState,
     show_wireframe: bool,
     show_faces: bool,
 ) {
     if show_faces {
-        mesh.draw_faces(d3, Color::LIGHTGRAY.alpha(0.7));
+        mesh.draw_faces(d3, state, Color::LIGHTGRAY.alpha(0.7));
     }
     if show_wireframe {
         mesh.draw_wireframe(d3, Color::BLUE);
@@ -181,14 +186,15 @@ fn draw_ui(d: &mut RaylibDrawHandle, params: &SimParams, mesh: Option<&mesh::Tet
     d.draw_text("R: Toggle Wireframe", 10, 60, 14, Color::MIDNIGHTBLUE);
     d.draw_text("F: Toggle Faces", 10, 78, 14, Color::MIDNIGHTBLUE);
     d.draw_text("SPACE: Pause/Resume", 10, 96, 14, Color::MIDNIGHTBLUE);
-    d.draw_text("T: Toggle Shuffle", 10, 114, 14, Color::MIDNIGHTBLUE);
+    d.draw_text("X: Reset Simulation", 10, 114, 14, Color::MIDNIGHTBLUE);
+    d.draw_text("T: Toggle Shuffle", 10, 132, 14, Color::MIDNIGHTBLUE);
     
-    d.draw_text("=== ADJUST ===", 10, 140, 16, Color::DARKGRAY);
-    d.draw_text("1/2: Length Compliance +/-", 10, 160, 14, Color::MIDNIGHTBLUE);
-    d.draw_text("3/4: Volume Compliance +/-", 10, 178, 14, Color::MIDNIGHTBLUE);
-    d.draw_text("5/6: Damping +/-", 10, 196, 14, Color::MIDNIGHTBLUE);
-    d.draw_text("9/0: Gravity +/-", 10, 214, 14, Color::MIDNIGHTBLUE);
-    d.draw_text("UP/DOWN: Substeps", 10, 232, 14, Color::MIDNIGHTBLUE);
+    d.draw_text("=== ADJUST ===", 10, 158, 16, Color::DARKGRAY);
+    d.draw_text("1/2: Length Compliance +/-", 10, 178, 14, Color::MIDNIGHTBLUE);
+    d.draw_text("3/4: Volume Compliance +/-", 10, 196, 14, Color::MIDNIGHTBLUE);
+    d.draw_text("5/6: Damping +/-", 10, 214, 14, Color::MIDNIGHTBLUE);
+    d.draw_text("9/0: Gravity +/-", 10, 232, 14, Color::MIDNIGHTBLUE);
+    d.draw_text("UP/DOWN: Substeps", 10, 250, 14, Color::MIDNIGHTBLUE);
     
     // Right panel: Current parameter values
     let panel_x = screen_width - 220;
@@ -242,7 +248,7 @@ fn draw_ui(d: &mut RaylibDrawHandle, params: &SimParams, mesh: Option<&mesh::Tet
 fn load_mesh(mesh_path: &str) -> Option<mesh::Tetrahedral> {
     mesh::Tetrahedral::load_mesh(mesh_path)
         .map(|mut m| {
-            m.translate(Vector3::new(0.0, 2.5, 0.0));
+            m.vertices.translate(Vector3::new(0.0, 2.5, 0.0));
             m
         })
         .ok()
@@ -263,6 +269,7 @@ struct SimParams {
     n_substeps: usize,
     shuffle_buffer_size: usize,
     paused: bool,
+    should_reset: bool,
 }
 
 impl Default for SimParams {
@@ -275,6 +282,7 @@ impl Default for SimParams {
             n_substeps: N_SUBSTEPS,
             shuffle_buffer_size: usize::MAX, // Full shuffle by default
             paused: false,
+            should_reset: false,
         }
     }
 }
@@ -298,6 +306,7 @@ impl SimParams {
 #[instrument]
 fn run_simulation(mesh_path: Option<&str>) {
     let mut mesh = mesh_path.and_then(load_mesh);
+    let original_mesh = mesh.clone();
     let mut show_wireframe = true;
     let mut show_faces = false;
     let mut sim_params = SimParams::default();
@@ -322,6 +331,20 @@ fn run_simulation(mesh_path: Option<&str>) {
     while !rl.window_should_close() {
         handle_input(&rl, &mut show_wireframe, &mut show_faces, &mut sim_params);
         rl.update_camera(&mut camera, CameraMode::CAMERA_THIRD_PERSON);
+
+        // Reset simulation if requested
+        if sim_params.should_reset {
+            if let Some(original) = &original_mesh {
+                mesh = Some(original.clone());
+                if let Some(m) = &mesh {
+                    state = Some(XpbdState::new(
+                        m.vertices.len(),
+                        m.constraints.edges.len() + m.constraints.tetrahedra.len(),
+                    ));
+                }
+            }
+            sim_params.should_reset = false;
+        }
 
         // Only step simulation if not paused
         if !sim_params.paused {
@@ -353,8 +376,8 @@ fn run_simulation(mesh_path: Option<&str>) {
             d3.draw_grid(20, 2.0);
 
             // Draw mesh if loaded
-            if let Some(mesh) = &mesh {
-                draw_mesh(&mut d3, mesh, show_wireframe, show_faces);
+            if let (Some(mesh), Some(st)) = (&mesh, &state) {
+                draw_mesh(&mut d3, mesh, st, show_wireframe, show_faces);
             }
         }
 

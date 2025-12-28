@@ -12,10 +12,9 @@ pub mod triangular;
 
 // Re-export common types for convenience
 pub use common::{
-    Edge, EdgeId, Result, Spatial, Tetrahedron, TetrahedronId, Triangle, Vertex, VertexId,
+    Edge, EdgeId, Mesh, Result, Tetrahedron, TetrahedronId, Triangle, Vertex, VertexId,
     dedup_with_warning,
 };
 
 // Re-export specific mesh types
 pub use tetrahedral::Tetrahedral;
-pub use triangular::TriangulatedSurface;

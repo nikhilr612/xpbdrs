@@ -3,6 +3,7 @@
 use std::ops::IndexMut;
 
 use bitvec::vec::BitVec;
+use rand::seq::SliceRandom;
 use raylib::math::Vector3;
 
 use crate::{
@@ -43,6 +44,8 @@ pub struct XpbdParams {
     /// A parameter that is inversely proportional to stiffness for edge length constraints.
     /// In particular, a value of 0.0 corresponds to infinite stiffness.
     pub length_compliance: f32,
+    /// Damping factor applied to velocities (0.0 = no damping, 1.0 = full damping).
+    pub damping: f32,
     /// Number of substeps per simulation step.
     pub n_substeps: usize,
     /// Time step for each simulation substep.
@@ -51,9 +54,13 @@ pub struct XpbdParams {
     pub l_threshold_length: f32,
     /// Volume constraint force-threshold for deactivation.
     pub l_threshold_volume: f32,
-    /// Scalar factor applied to all reference volumes.
-    /// When set > 1.0, this indicates that the mesh should inflate, and when set < 1.0, the mesh should deflate.
-    pub p_volume: f32,
+    /// Size of the shuffle buffer for constraint processing.
+    /// Constraints are collected into chunks of this size and shuffled before processing.
+    /// Use `usize::MAX` to shuffle all constraints together (full shuffle).
+    /// Use `1` to disable shuffling entirely.
+    pub shuffle_buffer_size: usize,
+    /// Constant acceleration field applied to all vertices (e.g., gravity).
+    pub constant_field: Vector3,
 }
 
 impl Default for XpbdParams {
@@ -61,12 +68,13 @@ impl Default for XpbdParams {
         Self {
             length_compliance: 0.0,
             volume_compliance: 0.0,
+            damping: 0.0,
             n_substeps: 10,
             time_substep: 0.016 / 10.0,
             l_threshold_length: f32::INFINITY,
             l_threshold_volume: f32::INFINITY,
-            p_volume: 1.0,
-            // constant_field: Vector3::new(0.0, -0.981, 0.0),
+            shuffle_buffer_size: usize::MAX, // Full shuffle by default
+            constant_field: Vector3::new(0.0, -9.81, 0.0), // Default gravity
         }
     }
 }
@@ -94,33 +102,44 @@ impl<V: IndexMut<VertexId, Output = Vertex>> ConstraintProcessor<'_, V> {
     /// Process constraints from an iterator, applying them to the vertices and deactivating those that exceed the threshold.
     /// Internally, the index of each constraint in the iterator is used to track constraint active status.
     /// Thus, it is imperative that `process` is called each time with constraints in the same order.
+    ///
+    /// Constraints are shuffled on-the-fly in chunks of `buffer_size` for better convergence
+    /// (avoids systematic bias from fixed iteration order).
     #[must_use]
     pub fn process<'a, I, C, const N: usize>(
         mut self,
         iter: I,
         l_threshold: f32,
         alpha: f32,
+        buffer_size: usize,
     ) -> Self
     where
         I: Iterator<Item = (&'a C, f32)>,
         C: Constraint<N> + 'a,
     {
         let base_index = self.constraint_index;
-        let n = iter
-            .enumerate() // <-- `i` used to identify each constraint and track for deactivation.
-            // TODO: shuffle the iteration order for better convergence
-            .fold(base_index, |counter, (i, (constraint, ref_value))| {
+        let mut rng = rand::thread_rng();
+        let mut total_count = 0;
+
+        // Process constraints in shuffled chunks
+        let mut peekable = iter.enumerate().peekable();
+        while peekable.peek().is_some() {
+            let mut buffer: Vec<(usize, (&C, f32))> = peekable.by_ref().take(buffer_size).collect();
+            total_count += buffer.len();
+            buffer.shuffle(&mut rng);
+
+            for (i, (constraint, ref_value)) in buffer {
                 let current_index = base_index + i;
                 if !self.inactive_constraints[current_index] {
                     let result = constraint.value_and_grad(self.vertices);
-                    if apply_constraint(result, ref_value, alpha, self.vertices).abs() > l_threshold
-                    {
+                    if apply_constraint(result, ref_value, alpha, self.vertices) > l_threshold {
                         self.inactive_constraints.set(current_index, true);
                     }
                 }
-                counter + 1
-            });
-        self.constraint_index = n;
+            }
+        }
+
+        self.constraint_index = base_index + total_count;
         self
     }
 }
@@ -137,7 +156,8 @@ pub fn step_basic<F>(
 where
     F: FnMut(&mut Vertex),
 {
-    let acceleration_due_to_gravity = |_: &Vertex| Vector3::new(0.0, -9.81, 0.0);
+    let constant_field = params.constant_field;
+    let acceleration_field = move |_: &Vertex| constant_field;
     for _ in 0..params.n_substeps {
         substep(
             params,
@@ -146,7 +166,7 @@ where
             &mesh.constraints,
             initial_value,
             &mut vertex_correction,
-            &acceleration_due_to_gravity,
+            &acceleration_field,
         );
     }
     state
@@ -180,11 +200,14 @@ pub fn substep<V, I, F, C, A>(
     A: Fn(&Vertex) -> Vector3,
 {
     let old_positions = &mut state.position_buffer; // use buffer for old positions.
+    let damping_factor = 1.0 - params.damping;
 
     for (i, vertex) in vertices.into_iter().enumerate() {
         // save old position
         old_positions[i] = vertex.position;
 
+        // Apply damping to velocity
+        state.velocities[i] *= damping_factor;
         state.velocities[i] += acceleration_field(vertex) * params.time_substep;
         vertex.position += state.velocities[i] * params.time_substep;
 

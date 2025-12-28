@@ -2,13 +2,13 @@
 
 use raylib::prelude::*;
 use std::io::Write;
-use tracing::{debug, info};
+use tracing::{debug, error, info};
 
-use super::common::{Result, TetrahedronId, Triangle, Vertex, dedup_with_warning};
+use super::common::{Mesh, Result, TetrahedronId, Triangle, Vertex, dedup_with_warning};
 use super::tgimport::TetgenParser;
 use crate::constraint::Constraint;
 use crate::mesh::{Edge, Tetrahedron};
-use crate::xpbd::{ConstraintSet, XpbdState};
+use crate::xpbd::ConstraintSet;
 
 /// Values computed from tetrahedral constraints.
 pub struct TetConstraintValues {
@@ -18,7 +18,7 @@ pub struct TetConstraintValues {
     pub volumes: Vec<f32>,
 }
 
-/// Struct to contain constraint data for teetrahedral meshes.
+/// Struct to contain constraint data for tetrahedral meshes.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct TetConstraints {
     /// Edge constraints for distance preservation.
@@ -40,19 +40,20 @@ impl ConstraintSet<Vec<Vertex>, TetConstraintValues> for TetConstraints {
         params: &crate::xpbd::XpbdParams,
         reference: &TetConstraintValues,
     ) {
-        let dt2 = params.time_substep * params.time_substep;
         let _ = processor
             .process(
                 self.edges.iter().zip(reference.lengths.iter().copied()),
-                params.l_threshold_length * dt2,
-                params.length_compliance / dt2,
+                params.l_threshold_length,
+                params.length_compliance / (params.time_substep * params.time_substep),
+                params.shuffle_buffer_size,
             )
             .process(
                 self.tetrahedra
                     .iter()
-                    .zip(reference.volumes.iter().map(|v| v * params.p_volume)),
-                params.l_threshold_volume * dt2,
-                params.volume_compliance / dt2,
+                    .zip(reference.volumes.iter().copied()),
+                params.l_threshold_volume,
+                params.volume_compliance / (params.time_substep * params.time_substep),
+                params.shuffle_buffer_size,
             );
     }
 }
@@ -152,6 +153,43 @@ impl Tetrahedral {
         Ok(())
     }
 
+    /// Load mesh with automatic format detection.
+    ///
+    /// # Errors
+    /// Returns an error if the file format is unsupported or loading fails.
+    #[tracing::instrument]
+    pub fn load_mesh(mesh_path: &str) -> Result<Self> {
+        info!(mesh_path, "Attempting to load mesh");
+
+        let mesh = if std::path::Path::new(mesh_path)
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("bin"))
+        {
+            debug!("Loading as bincode file");
+            Self::from_bincode(mesh_path)
+        } else {
+            debug!("Loading as tetgen files");
+            Self::from_files(mesh_path)
+        };
+
+        match &mesh {
+            Ok(m) => {
+                info!(
+                    vertices = m.vertices.len(),
+                    edges = m.constraints.edges.len(),
+                    faces = m.faces.len(),
+                    tetrahedra = m.constraints.tetrahedra.len(),
+                    "Mesh loaded successfully"
+                );
+            }
+            Err(e) => {
+                error!(mesh_path, error = %e, "Failed to load mesh");
+            }
+        }
+
+        mesh
+    }
+
     /// Draw wireframe of the mesh.
     pub fn draw_wireframe(&self, d3: &mut RaylibMode3D<RaylibDrawHandle>, color: Color) {
         // Draw explicit edges if available
@@ -171,7 +209,6 @@ impl Tetrahedral {
     pub fn draw_faces(
         &self,
         d3: &mut RaylibMode3D<RaylibDrawHandle>,
-        state: &XpbdState,
         color: Color,
     ) {
         for face in &self.faces {
@@ -181,22 +218,41 @@ impl Tetrahedral {
                 self.vertices[(face.verts[2].0 - 1) as usize],
             ];
 
-            // A triangle is "torn" if any of its corresponding edge constraints are inactive.
-            let torn = face
-                .edges
-                .iter()
-                .filter_map(|e| e.as_ref()) // Only check edges that have constraints
-                .any(|e| state.constraint_inactive(e.0 as usize)); // in this constraint set, edges are solved first, so base index is 0.
-
-            if !torn {
-                d3.draw_triangle3D(
-                    verts[0].position,
-                    verts[1].position,
-                    verts[2].position,
-                    color,
-                );
-            }
+            d3.draw_triangle3D(
+                verts[0].position,
+                verts[1].position,
+                verts[2].position,
+                color,
+            );
         }
+    }
+}
+
+impl Mesh for Tetrahedral {
+    fn translate(&mut self, by: Vector3) {
+        for vertex in &mut self.vertices {
+            vertex.position += by;
+        }
+    }
+
+    fn bounding_box(&self) -> (Vector3, Vector3) {
+        if self.vertices.is_empty() {
+            return (Vector3::zero(), Vector3::zero());
+        }
+
+        let mut min = Vector3::new(f32::INFINITY, f32::INFINITY, f32::INFINITY);
+        let mut max = Vector3::new(f32::NEG_INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY);
+
+        for vertex in &self.vertices {
+            min.x = min.x.min(vertex.position.x);
+            min.y = min.y.min(vertex.position.y);
+            min.z = min.z.min(vertex.position.z);
+            max.x = max.x.max(vertex.position.x);
+            max.y = max.y.max(vertex.position.y);
+            max.z = max.z.max(vertex.position.z);
+        }
+
+        (min, max)
     }
 }
 
@@ -226,6 +282,48 @@ mod tests {
         assert_eq!(mesh.constraints.edges.len(), 1);
         assert_eq!(mesh.faces.len(), 1);
         assert_eq!(mesh.constraints.tetrahedra.len(), 1);
+
+        // Cleanup
+        for ext in &["node", "edge", "face", "ele"] {
+            let _ = fs::remove_file(format!("{prefix}.{ext}"));
+        }
+    }
+
+    #[test]
+    fn test_translation() {
+        let prefix = "test_translate";
+        create_test_files(prefix);
+
+        let mut mesh = Tetrahedral::from_files(prefix).unwrap();
+        let translation = Vector3::new(1.0, 2.0, 3.0);
+        let original_positions: Vec<_> = mesh.vertices.iter().map(|v| v.position).collect();
+
+        mesh.translate(translation);
+
+        for (i, vertex) in mesh.vertices.iter().enumerate() {
+            let expected = original_positions[i] + translation;
+            assert!((vertex.position.x - expected.x).abs() < f32::EPSILON);
+            assert!((vertex.position.y - expected.y).abs() < f32::EPSILON);
+            assert!((vertex.position.z - expected.z).abs() < f32::EPSILON);
+        }
+
+        // Cleanup
+        for ext in &["node", "edge", "face", "ele"] {
+            let _ = fs::remove_file(format!("{prefix}.{ext}"));
+        }
+    }
+
+    #[test]
+    fn test_bounding_box() {
+        let prefix = "test_bbox";
+        create_test_files(prefix);
+
+        let mesh = Tetrahedral::from_files(prefix).unwrap();
+        let (min, max) = mesh.bounding_box();
+
+        // Based on our test data: vertices at (0,0,0) and (1,1,1)
+        assert_eq!(min, Vector3::new(0.0, 0.0, 0.0));
+        assert_eq!(max, Vector3::new(1.0, 1.0, 1.0));
 
         // Cleanup
         for ext in &["node", "edge", "face", "ele"] {

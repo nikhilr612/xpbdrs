@@ -18,7 +18,7 @@ pub struct TetConstraintValues {
     pub volumes: Vec<f32>,
 }
 
-/// Struct to contain constraint data for tetrahedral meshes.
+/// Struct to contain constraint data for teetrahedral meshes.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct TetConstraints {
     /// Edge constraints for distance preservation.
@@ -40,18 +40,19 @@ impl ConstraintSet<Vec<Vertex>, TetConstraintValues> for TetConstraints {
         params: &crate::xpbd::XpbdParams,
         reference: &TetConstraintValues,
     ) {
+        let dt2 = params.time_substep * params.time_substep;
         let _ = processor
             .process(
                 self.edges.iter().zip(reference.lengths.iter().copied()),
-                params.l_threshold_length,
-                params.length_compliance / (params.time_substep * params.time_substep),
+                params.l_threshold_length * dt2,
+                params.length_compliance / dt2,
             )
             .process(
                 self.tetrahedra
                     .iter()
-                    .zip(reference.volumes.iter().copied()),
-                params.l_threshold_volume,
-                params.volume_compliance / (params.time_substep * params.time_substep),
+                    .zip(reference.volumes.iter().map(|v| v * params.p_volume)),
+                params.l_threshold_volume * dt2,
+                params.volume_compliance / dt2,
             );
     }
 }

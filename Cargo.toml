@@ -12,6 +12,10 @@ path = "src/lib.rs"
 name = "xpbdrsc"
 path = "src/main.rs"
 
+[[example]]
+name = "inflation_demo"
+path = "examples/inflation_demo.rs"
+
 [dependencies]
 bincode = "1.3.3"
 bitvec = "1.0.1"

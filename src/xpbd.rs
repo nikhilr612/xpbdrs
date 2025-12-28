@@ -51,6 +51,9 @@ pub struct XpbdParams {
     pub l_threshold_length: f32,
     /// Volume constraint force-threshold for deactivation.
     pub l_threshold_volume: f32,
+    /// Scalar factor applied to all reference volumes.
+    /// When set > 1.0, this indicates that the mesh should inflate, and when set < 1.0, the mesh should deflate.
+    pub p_volume: f32,
 }
 
 impl Default for XpbdParams {
@@ -62,6 +65,7 @@ impl Default for XpbdParams {
             time_substep: 0.016 / 10.0,
             l_threshold_length: f32::INFINITY,
             l_threshold_volume: f32::INFINITY,
+            p_volume: 1.0,
             // constant_field: Vector3::new(0.0, -0.981, 0.0),
         }
     }
@@ -109,7 +113,8 @@ impl<V: IndexMut<VertexId, Output = Vertex>> ConstraintProcessor<'_, V> {
                 let current_index = base_index + i;
                 if !self.inactive_constraints[current_index] {
                     let result = constraint.value_and_grad(self.vertices);
-                    if apply_constraint(result, ref_value, alpha, self.vertices) > l_threshold {
+                    if apply_constraint(result, ref_value, alpha, self.vertices).abs() > l_threshold
+                    {
                         self.inactive_constraints.set(current_index, true);
                     }
                 }

@@ -154,6 +154,8 @@ where
 
 /// Trait for constraint set over vertices collected in `V`, evaluating to constraint errors of type `I`.
 pub trait ConstraintSet<V: IndexMut<VertexId, Output = Vertex>, I> {
+    /// The number of constraints in the set.
+    fn size(&self) -> usize;
     /// Evaluate the constraint set on given vertices.
     fn evaluate(&self, on: &V) -> I;
     /// Solve the constraint set using the given processor.

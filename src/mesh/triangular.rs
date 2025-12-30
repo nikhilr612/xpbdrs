@@ -1,6 +1,6 @@
 //! Triangulated Surface mesh implementation
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::io::Write;
 
 use raylib::prelude::*;
@@ -33,6 +33,10 @@ pub struct TriConstraintValues {
 }
 
 impl ConstraintSet<Vec<Vertex>, TriConstraintValues> for TriConstraints {
+    fn size(&self) -> usize {
+        self.edges.len() + self.weak_bending.len()
+    }
+
     fn evaluate(&self, on: &Vec<Vertex>) -> TriConstraintValues {
         let edge_lengths = self.edges.iter().map(|e| e.value(on)).collect();
         let weak_bending_lengths = self.weak_bending.iter().map(|e| e.value(on)).collect();
@@ -92,14 +96,21 @@ impl TriangulatedSurface {
     /// Panics if the number of unique edges exceeds `u32::MAX`.
     #[tracing::instrument(skip(vertices, faces), fields(vertex_count = vertices.len(), face_count = faces.len()))]
     pub fn new(vertices: Vec<Vertex>, faces: &[[VertexId; 3]]) -> Self {
-        let triangles = faces
+        let dedup_triangles = faces
             .iter()
-            .map(|f| {
+            .enumerate()
+            .map(|(i, f)| {
                 let mut f = *f;
                 f.sort_by_key(|v| v.0);
-                f
+                (f, i)
             })
-            .collect::<HashSet<_>>();
+            .collect::<HashMap<_, _>>();
+
+        // Preserve winding order.
+        let triangles = dedup_triangles
+            .values()
+            .map(|&i| faces[i])
+            .collect::<Vec<_>>();
 
         if faces.len() != triangles.len() {
             warn!(
@@ -127,12 +138,18 @@ impl TriangulatedSurface {
 
         let mut faces = Vec::with_capacity(triangles.len());
         for tri in &triangles {
-            // Edge(tri[0], tri[1]) - opposite vertex is tri[2]
-            let e1 = add_edge(Edge(tri[0], tri[1]), tri[2]);
-            // Edge(tri[1], tri[2]) - opposite vertex is tri[0]
-            let e2 = add_edge(Edge(tri[1], tri[2]), tri[0]);
-            // Edge(tri[0], tri[2]) - opposite vertex is tri[1]
-            let e3 = add_edge(Edge(tri[0], tri[2]), tri[1]);
+            let (a, b, c) = {
+                let mut c = *tri;
+                c.sort_by_key(|v| v.0);
+                (c[0], c[1], c[2])
+            };
+
+            // Edge(a, b) - opposite vertex is c
+            let e1 = add_edge(Edge(a, b), c);
+            // Edge(b, c) - opposite vertex is a
+            let e2 = add_edge(Edge(b, c), a);
+            // Edge(a, c) - opposite vertex is b
+            let e3 = add_edge(Edge(a, c), b);
             faces.push(Triangle {
                 verts: *tri,
                 edges: [Some(e1), Some(e2), Some(e3)],
@@ -231,7 +248,23 @@ impl TriangulatedSurface {
         }
     }
 
+    /// Draw weak bending constraints.
+    pub fn draw_weak_bending(&self, d3: &mut RaylibMode3D<RaylibDrawHandle>, color: Color) {
+        for edge in &self.constraints.weak_bending {
+            if let (Some(v1), Some(v2)) = (
+                self.vertices.get((edge.0.0 - 1) as usize),
+                self.vertices.get((edge.1.0 - 1) as usize),
+            ) {
+                let start = v1.position;
+                let end = v2.position;
+                d3.draw_line_3D(start, end, color);
+            }
+        }
+    }
+
     /// Draw filled faces.
+    /// # Panics
+    /// Panics if any face does not have corresponding edges.
     pub fn draw_faces(
         &self,
         d3: &mut RaylibMode3D<RaylibDrawHandle>,
@@ -246,11 +279,11 @@ impl TriangulatedSurface {
             ];
 
             // A triangle is "torn" if any of its corresponding edge constraints are inactive.
-            let torn = face
-                .edges
-                .iter()
-                .filter_map(|e| e.as_ref()) // Only check edges that have constraints
-                .any(|e| state.constraint_inactive(e.0 as usize)); // edges are solved first, so base index is 0.
+            let torn = face.edges.iter().any(|e| {
+                state.constraint_inactive(
+                    e.expect("All triangles should have corresponding edges").0 as usize,
+                )
+            }); // edges are solved first, so base index is 0.
 
             if !torn {
                 d3.draw_triangle3D(

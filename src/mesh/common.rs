@@ -164,9 +164,20 @@ pub trait Spatial {
 
     /// Get bounding box of the vertices as (min, max) corners.
     fn bounding_box(&self) -> (Vector3, Vector3);
+
+    /// Get centroid of the vertices.
+    fn centroid(&self) -> Vector3;
 }
 
 impl Spatial for Vec<Vertex> {
+    #[allow(clippy::cast_precision_loss)]
+    fn centroid(&self) -> Vector3 {
+        self.iter()
+            .map(|v| v.position)
+            .fold(Vector3::zero(), |acc, pos| acc + pos)
+            / (self.len() as f32).max(1.0)
+    }
+
     fn translate(&mut self, by: Vector3) {
         for vertex in self {
             vertex.position += by;

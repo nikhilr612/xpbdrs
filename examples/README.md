@@ -1,5 +1,32 @@
 # XPBD Examples
 
+## Cloth Simulation
+
+Demonstrates cloth physics using a triangulated surface mesh on a subdivided square. The cloth is fixed at boundaries and after some time a force is applied to its center.
+
+### Usage
+
+```bash
+cargo run --example cloth
+cargo run --example cloth -- --resolution 30 --size 6.0
+```
+
+### Controls
+
+- **X**: Toggle Wireframe | **F**: Toggle Faces | **R**: Reset
+- **Space/Shift**: Camera up/down | **Mouse**: Rotate camera
+
+### How it Works
+
+Creates a subdivided square mesh with triangular faces. Boundary vertices are fixed in place with very small inverse mass, while interior vertices can move freely. Edge constraints maintain structural integrity, and weak bending constraints prevent excessive folding.
+
+After 3 seconds, a strong downward force is applied at the cloth center for 1 second.
+
+### Parameters
+
+- `--resolution`: Grid resolution (default: 20)
+- `--size`: Cloth size in world units (default: 5.0)
+
 ## Inflation Demo
 
 Demonstrates soft body inflation using `p_volume` to scale tetrahedral mesh volumes. Spawns a `deci_spot` mesh at height and inflates it over time.

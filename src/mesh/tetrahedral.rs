@@ -28,6 +28,10 @@ pub struct TetConstraints {
 }
 
 impl ConstraintSet<Vec<Vertex>, TetConstraintValues> for TetConstraints {
+    fn size(&self) -> usize {
+        self.edges.len() + self.tetrahedra.len()
+    }
+
     fn evaluate(&self, on: &Vec<Vertex>) -> TetConstraintValues {
         let lengths = self.edges.iter().map(|e| e.value(on)).collect();
         let volumes = self.tetrahedra.iter().map(|t| t.value(on)).collect();

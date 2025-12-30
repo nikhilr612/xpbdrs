@@ -8,8 +8,8 @@ use xpbdrs::{
 };
 
 #[derive(Parser)]
-#[command(name = "xpbdcloth")]
-#[command(about = "Extended Position Based Dynamics cloth simulation")]
+#[command(name = "xpbd_demo")]
+#[command(about = "Extended Position Based Dynamics Demo")]
 #[command(version)]
 struct Cli {
     #[command(subcommand)]

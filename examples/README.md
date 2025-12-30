@@ -1,8 +1,19 @@
 # XPBD Examples
 
-## Cloth Simulation
+This directory contains example applications demonstrating various capabilities of the XPBD physics engine. Each example showcases different aspects of deformable body simulation using Extended Position Based Dynamics.
 
-Demonstrates cloth physics using a triangulated surface mesh on a subdivided square. The cloth is fixed at boundaries and after some time a force is applied to its center.
+## Examples Overview
+
+| Example | Description | Screenshot |
+|---------|-------------|------------|
+| [Plane Surface Deformation](#plane-surface-deformation) | Interactive cloth physics with center force application | - |
+| [Cloth Draping](#cloth-draping) | Realistic cloth falling and draping over a sphere | ![Draping](screenshots/draping.png) |
+| [Inflation Demo](#inflation-demo) | Soft body inflation using volume constraints | - |
+| [Spot in Box](#spot-in-box) | Physics simulation with box constraints and periodic forces | ![Spot in Box](screenshots/spotinbox.png) |
+
+## Plane Surface Deformation
+
+Demonstrates cloth physics using a triangulated surface mesh on a subdivided square. The cloth is fixed at boundaries and after some time a force is applied to its center, creating realistic deformation patterns.
 
 ### Usage
 
@@ -13,14 +24,19 @@ cargo run --example deform_demo -- --resolution 30 --size 6.0
 
 ### Controls
 
-- **X**: Toggle Wireframe | **F**: Toggle Faces | **R**: Reset
-- **Space/Shift**: Camera up/down | **Mouse**: Rotate camera
+- **X**: Toggle Wireframe 
+- **F**: Toggle Faces 
+- **R**: Reset simulation
+- **Space/Shift**: Move camera up/down 
+- **Mouse**: Rotate camera
 
-### How it Works
+### Implementation Details
 
-Creates a subdivided square mesh with triangular faces. Boundary vertices are fixed in place with very small inverse mass, while interior vertices can move freely. Edge constraints maintain structural integrity, and weak bending constraints prevent excessive folding.
-
-After 3 seconds, a strong downward force is applied at the cloth center for 1 second.
+- Creates a subdivided square mesh with triangular faces
+- Boundary vertices are constrained with high inverse mass (effectively fixed)
+- Interior vertices maintain structural integrity through edge constraints
+- Weak bending constraints prevent excessive folding
+- After 3 seconds: strong downward force applied at cloth center for 1 second
 
 ### Parameters
 
@@ -29,7 +45,9 @@ After 3 seconds, a strong downward force is applied at the cloth center for 1 se
 
 ## Cloth Draping
 
-Demonstrates realistic cloth draping simulation where a cloth mesh falls and drapes over a sphere. All cloth vertices have uniform mass, creating natural cloth behavior under gravity.
+Demonstrates realistic cloth draping simulation where a cloth mesh falls under gravity and naturally drapes over a spherical obstacle. This example showcases collision detection and realistic cloth behavior.
+
+![Cloth Draping Demo](screenshots/draping.png)
 
 ### Usage
 
@@ -40,14 +58,19 @@ cargo run --example cloth_draping -- --resolution 25 --size 4.0 --height 2.5 --s
 
 ### Controls
 
-- **X**: Toggle Wireframe | **F**: Toggle Faces | **R**: Reset
-- **Space/Shift**: Camera up/down | **Mouse**: Rotate camera
+- **X**: Toggle Wireframe 
+- **F**: Toggle Faces 
+- **R**: Reset simulation
+- **Space/Shift**: Move camera up/down 
+- **Mouse**: Rotate camera
 
-### How it Works
+### Implementation Details
 
-Creates a subdivided square cloth mesh with all vertices having identical mass. The cloth is spawned at a specified height above a sphere and falls under gravity. Collision detection ensures the cloth drapes naturally over the sphere rather than passing through it.
-
-The simulation uses sphere collision handling in each physics substep and applies damping to create realistic cloth movement.
+- Uniform mass distribution across all cloth vertices
+- Cloth spawned at specified height above sphere
+- Gravity-driven dynamics with realistic damping
+- Sphere collision detection prevents mesh penetration
+- Constraint-based physics maintains cloth structure during draping
 
 ### Parameters
 
@@ -58,7 +81,7 @@ The simulation uses sphere collision handling in each physics substep and applie
 
 ## Inflation Demo
 
-Demonstrates soft body inflation using `p_volume` to scale tetrahedral mesh volumes. Spawns a `deci_spot` mesh at height and inflates it over time.
+Demonstrates soft body inflation mechanics using volume constraints to scale tetrahedral mesh volumes. The example uses the `deci_spot` mesh which inflates over time, showcasing internal pressure simulation.
 
 ### Usage
 
@@ -69,18 +92,30 @@ cargo run --example inflation_demo -- path/to/custom/mesh
 
 ### Controls
 
-- **X**: Wireframe | **F**: Faces | **P**: Pause | **R**: Reset
-- **Space/Shift**: Camera up/down | **Mouse**: Rotate camera
+- **X**: Toggle Wireframe 
+- **F**: Toggle Faces 
+- **P**: Pause/Resume simulation
+- **R**: Reset simulation
+- **Space/Shift**: Move camera up/down 
+- **Mouse**: Rotate camera
 
-### How it Works
+### Implementation Details
 
-The mesh falls for 2 seconds, then inflates over 5 seconds by scaling `p_volume` from 1.0x to 2.5x in `XpbdParams`. This creates internal pressure while edge constraints maintain structural integrity.
+- 2-second free fall phase under gravity
+- 5-second inflation phase scaling `p_volume` from 1.0x to 2.5x
+- Internal pressure created through volume constraint scaling
+- Edge constraints maintain structural mesh integrity
+- Supports tetrahedral meshes (TetGen `.node/.ele/.edge/.face` or `.bin` format)
 
-Uses tetrahedral meshes (tetgen `.node/.ele/.edge/.face` files or `.bin` format). The default `deci_spot.bin` is a decimated variant of Spot the Cow by Keenan Crane.
+### Mesh Requirements
 
-## Spot in a Box
+Uses tetrahedral meshes with volume constraints. The default mesh is `deci_spot.bin`, a decimated version of "Spot the Cow" by Keenan Crane.
 
-Demonstrates physics simulation with box collision constraints and periodic force application. Spawns a `deci_spot` mesh at height with gravity, constrains it within a box using collision callbacks, and periodically applies preset forces at the centroid for short durations.
+## Spot in Box
+
+Demonstrates constrained physics simulation with periodic force application. A tetrahedral mesh is confined within a box using collision callbacks and experiences periodic impulse forces, creating dynamic bouncing behavior.
+
+![Spot in Box Demo](screenshots/spotinbox.png)
 
 ### Usage
 
@@ -90,10 +125,43 @@ cargo run --example spot_in_box
 
 ### Controls
 
-- **R**: Reset | **Mouse**: Rotate camera
+- **R**: Reset simulation
+- **Mouse**: Rotate camera
 
-### How it Works
+### Implementation Details
 
-The mesh spawns at a fixed height and falls under gravity within a box constraint. Every 1.5 seconds, a preset force vector from a cycling list is applied for 0.1 seconds using an inverse square law (F = k/r²) where force magnitude is inversely proportional to the square of distance from the mesh centroid. Forces below a threshold distance are ignored, and maximum force is capped for stability.
+- Mesh spawns at fixed height within box constraints
+- Box collision detection using callback-based constraint system
+- Periodic force application every 1.5 seconds for 0.1-second duration
+- Force magnitude follows inverse square law: F = k/r²
+- Force vector cycles through 4 preset directions
+- Distance threshold and maximum force capping ensure simulation stability
 
-The simulation cycles through 4 different preset force directions, creating predictable but varied motion as the mesh bounces around the box.
+### Physics Parameters
+
+- Force application frequency: 1.5 seconds
+- Force duration: 0.1 seconds  
+- Force law: Inverse square distance from mesh centroid
+- 4 cyclic force directions for varied motion patterns
+
+## Building and Running
+
+All examples can be built and run using Cargo:
+
+```bash
+# Build all examples
+cargo build --examples
+
+# Run specific example
+cargo run --example <example_name>
+
+# Run with custom parameters
+cargo run --example <example_name> -- [parameters]
+```
+
+## Technical Notes
+
+- All examples use the raylib graphics backend for real-time visualization
+- Physics timestep and substep parameters are tuned per example for stability
+- Mesh loading supports both TetGen ASCII format and binary serialization
+- Interactive controls provide real-time simulation manipulation

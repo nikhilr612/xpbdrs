@@ -3,6 +3,7 @@ use raylib::prelude::*;
 use tracing::{debug, error, info, instrument};
 
 use xpbdrs::{
+    interaction,
     mesh::{self, Spatial},
     xpbd::{self, ConstraintSet, XpbdState},
 };
@@ -96,35 +97,78 @@ fn setup_camera(mesh: Option<&mesh::Tetrahedral>) -> (Vector3, Vector3) {
     )
 }
 
-fn handle_input(
-    rl: &RaylibHandle,
-    show_wireframe: &mut bool,
-    show_faces: &mut bool,
-    should_reset: &mut bool,
-    camera: &mut Camera3D,
-) {
+fn handle_input(rl: &RaylibHandle, show_wireframe: &mut bool, show_faces: &mut bool, params: &mut SimParams) {
     if rl.is_key_pressed(KeyboardKey::KEY_X) {
         *show_wireframe = !*show_wireframe;
     }
     if rl.is_key_pressed(KeyboardKey::KEY_F) {
         *show_faces = !*show_faces;
     }
-    if rl.is_key_pressed(KeyboardKey::KEY_R) {
-        *should_reset = true;
+    // Pause/unpause simulation
+    if rl.is_key_pressed(KeyboardKey::KEY_SPACE) {
+        params.paused = !params.paused;
     }
-
-    // Camera Y-axis movement
-    const CAMERA_SPEED: f32 = 0.1;
-    if rl.is_key_down(KeyboardKey::KEY_SPACE) {
-        // Space: Move camera up
-        camera.position.y += CAMERA_SPEED;
-        camera.target.y += CAMERA_SPEED;
-    } else if rl.is_key_down(KeyboardKey::KEY_LEFT_SHIFT)
-        || rl.is_key_down(KeyboardKey::KEY_RIGHT_SHIFT)
-    {
-        // Shift: Move camera down
-        camera.position.y -= CAMERA_SPEED;
-        camera.target.y -= CAMERA_SPEED;
+    // Reset simulation
+    if rl.is_key_pressed(KeyboardKey::KEY_R) {
+        params.should_reset = true;
+    }
+    // Toggle shuffle mode (full shuffle vs no shuffle)
+    if rl.is_key_pressed(KeyboardKey::KEY_T) {
+        params.shuffle_buffer_size = if params.shuffle_buffer_size == usize::MAX { 1 } else { usize::MAX };
+    }
+    
+    // Parameter adjustment step sizes
+    let compliance_step = 0.00000001;
+    let damping_step = 0.0005;
+    let gravity_step = 0.1;
+    
+    // Edge compliance: 1/2 to increase/decrease
+    if rl.is_key_pressed(KeyboardKey::KEY_ONE) {
+        params.length_compliance = (params.length_compliance + compliance_step).min(0.001);
+    }
+    if rl.is_key_pressed(KeyboardKey::KEY_TWO) {
+        params.length_compliance = (params.length_compliance - compliance_step).max(0.0);
+    }
+    
+    // Volume compliance: 3/4 to increase/decrease
+    if rl.is_key_pressed(KeyboardKey::KEY_THREE) {
+        params.volume_compliance = (params.volume_compliance + compliance_step).min(0.001);
+    }
+    if rl.is_key_pressed(KeyboardKey::KEY_FOUR) {
+        params.volume_compliance = (params.volume_compliance - compliance_step).max(0.0);
+    }
+    
+    // Damping: 5/6 to increase/decrease
+    if rl.is_key_pressed(KeyboardKey::KEY_FIVE) {
+        params.damping = (params.damping + damping_step).min(1.0);
+    }
+    if rl.is_key_pressed(KeyboardKey::KEY_SIX) {
+        params.damping = (params.damping - damping_step).max(0.0);
+    }
+    
+    // Interaction force: 7/8 to increase/decrease
+    let force_step = 5.0;
+    if rl.is_key_pressed(KeyboardKey::KEY_SEVEN) {
+        params.interaction_force = (params.interaction_force + force_step).min(1000.0);
+    }
+    if rl.is_key_pressed(KeyboardKey::KEY_EIGHT) {
+        params.interaction_force = (params.interaction_force - force_step).max(0.5);
+    }
+    
+    // Gravity: 9/0 to increase/decrease magnitude
+    if rl.is_key_pressed(KeyboardKey::KEY_NINE) {
+        params.gravity -= gravity_step; // More negative = stronger gravity
+    }
+    if rl.is_key_pressed(KeyboardKey::KEY_ZERO) {
+        params.gravity += gravity_step;
+    }
+    
+    // Substeps: UP/DOWN to adjust
+    if rl.is_key_pressed(KeyboardKey::KEY_UP) {
+        params.n_substeps = (params.n_substeps + 5).min(100);
+    }
+    if rl.is_key_pressed(KeyboardKey::KEY_DOWN) {
+        params.n_substeps = params.n_substeps.saturating_sub(5).max(1);
     }
 }
 
@@ -136,34 +180,104 @@ fn draw_mesh(
     show_faces: bool,
 ) {
     if show_faces {
-        mesh.draw_faces(d3, state, Color::new(255, 215, 0, 200)); // Gold with transparency
+        mesh.draw_faces(d3, state, Color::LIGHTGRAY.alpha(0.7));
     }
     if show_wireframe {
-        mesh.draw_wireframe(d3, Color::new(30, 144, 255, 255)); // Dodger blue
+        mesh.draw_wireframe(d3, state, Color::BLUE);
     }
 }
 
-fn draw_ui(d: &mut RaylibDrawHandle) {
+fn draw_ui(d: &mut RaylibDrawHandle, params: &SimParams, mesh: Option<&mesh::Tetrahedral>) {
+    let screen_width = d.get_screen_width();
+    
+    // Left panel: Controls help
     d.draw_fps(10, 10);
-    d.draw_text("X: Wireframe", 10, 40, 15, Color::BLACK);
-    d.draw_text("F: Faces", 10, 60, 15, Color::BLACK);
-    d.draw_text("R: Reset", 10, 80, 15, Color::BLACK);
-    d.draw_text("Space: Camera Up", 10, 100, 15, Color::BLACK);
-    d.draw_text("Shift: Camera Down", 10, 120, 15, Color::BLACK);
+    d.draw_text("=== CONTROLS ===", 10, 40, 16, Color::DARKGRAY);
+    d.draw_text("X: Toggle Wireframe", 10, 60, 14, Color::MIDNIGHTBLUE);
+    d.draw_text("F: Toggle Faces", 10, 78, 14, Color::MIDNIGHTBLUE);
+    d.draw_text("SPACE: Pause/Resume", 10, 96, 14, Color::MIDNIGHTBLUE);
+    d.draw_text("R: Reset Simulation", 10, 114, 14, Color::MIDNIGHTBLUE);
+    d.draw_text("T: Toggle Shuffle", 10, 132, 14, Color::MIDNIGHTBLUE);
+    d.draw_text("LMB: Push & Tear Mesh", 10, 150, 14, Color::MAROON);
+    
+    d.draw_text("=== ADJUST ===", 10, 176, 16, Color::DARKGRAY);
+    d.draw_text("1/2: Length Compliance +/-", 10, 196, 14, Color::MIDNIGHTBLUE);
+    d.draw_text("3/4: Volume Compliance +/-", 10, 214, 14, Color::MIDNIGHTBLUE);
+    d.draw_text("5/6: Damping +/-", 10, 232, 14, Color::MIDNIGHTBLUE);
+    d.draw_text("7/8: Interaction Force +/-", 10, 250, 14, Color::MIDNIGHTBLUE);
+    d.draw_text("9/0: Gravity +/-", 10, 268, 14, Color::MIDNIGHTBLUE);
+    d.draw_text("UP/DOWN: Substeps", 10, 286, 14, Color::MIDNIGHTBLUE);
+    
+    // Right panel: Current parameter values
+    let panel_x = screen_width - 220;
+    d.draw_rectangle(panel_x - 10, 30, 220, 280, Color::WHITE.alpha(0.85));
+    d.draw_rectangle_lines(panel_x - 10, 30, 220, 280, Color::DARKGRAY);
+    
+    d.draw_text("=== PARAMETERS ===", panel_x, 40, 16, Color::DARKGRAY);
+    
+    // Status indicator
+    let status_text = if params.paused { "PAUSED" } else { "RUNNING" };
+    let status_color = if params.paused { Color::RED } else { Color::GREEN };
+    d.draw_text(status_text, panel_x, 60, 18, status_color);
+    
+    // Parameter values
+    d.draw_text(
+        &format!("Length Compl: {:.2e}", params.length_compliance),
+        panel_x, 85, 14, Color::DARKBLUE
+    );
+    d.draw_text(
+        &format!("Vol Compl:    {:.2e}", params.volume_compliance),
+        panel_x, 103, 14, Color::DARKBLUE
+    );
+    d.draw_text(
+        &format!("Damping:      {:.5}", params.damping),
+        panel_x, 121, 14, Color::DARKBLUE
+    );
+    d.draw_text(
+        &format!("Gravity:      {:.2}", params.gravity),
+        panel_x, 139, 14, Color::DARKBLUE
+    );
+    d.draw_text(
+        &format!("Substeps:     {}", params.n_substeps),
+        panel_x, 157, 14, Color::DARKBLUE
+    );
+    
+    let shuffle_text = if params.shuffle_buffer_size == usize::MAX { "FULL" } else { "OFF" };
+    let shuffle_color = if params.shuffle_buffer_size == usize::MAX { Color::GREEN } else { Color::GRAY };
+    d.draw_text(&format!("Shuffle:      {}", shuffle_text), panel_x, 175, 14, shuffle_color);
+    
+    // Interaction parameters
+    d.draw_text("--- Interaction ---", panel_x, 200, 14, Color::DARKGRAY);
+    d.draw_text(
+        &format!("Force:        {:.1}", params.interaction_force),
+        panel_x, 218, 14, Color::MAROON
+    );
+    d.draw_text(
+        &format!("Radius:       {:.2}", params.interaction_radius),
+        panel_x, 236, 14, Color::MAROON
+    );
+    d.draw_text(
+        &format!("Stretch:      {:.0}%", params.stretch_threshold * 100.0),
+        panel_x, 254, 14, Color::MAROON
+    );
+    d.draw_text(
+        &format!("Compress:     {:.0}%", params.compression_threshold * 100.0),
+        panel_x, 272, 14, Color::MAROON
+    );
+    
+    // Mesh info if available
+    if let Some(m) = mesh {
+        d.draw_text("--- Mesh ---", panel_x, 297, 14, Color::DARKGRAY);
+        d.draw_text(
+            &format!("Verts: {} Edges: {}", m.vertices.len(), m.constraints.edges.len()),
+            panel_x, 315, 12, Color::GRAY
+        );
+    }
 }
 
 #[instrument]
 fn load_mesh(mesh_path: &str) -> Option<mesh::Tetrahedral> {
-    let load_result = if std::path::Path::new(mesh_path)
-        .extension()
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("bin"))
-    {
-        mesh::Tetrahedral::from_bincode(mesh_path)
-    } else {
-        mesh::Tetrahedral::from_files(mesh_path)
-    };
-
-    load_result
+    mesh::Tetrahedral::load_mesh(mesh_path)
         .map(|mut m| {
             m.vertices.translate(Vector3::new(0.0, 2.5, 0.0));
             m
@@ -173,9 +287,62 @@ fn load_mesh(mesh_path: &str) -> Option<mesh::Tetrahedral> {
 
 const TARGET_FPS: u16 = 60;
 const TIME_STEP: f32 = 1.0 / TARGET_FPS as f32;
-const N_SUBSTEPS: usize = 10;
-const EDGE_COMPLIANCE: f32 = 0.00;
+const N_SUBSTEPS: usize = 30;
+const EDGE_COMPLIANCE: f32 = 0.00001; // Stiffer edges for stability
 const VOLUME_COMPLIANCE: f32 = 0.00;
+
+/// Mutable simulation state for live parameter tuning.
+struct SimParams {
+    length_compliance: f32,
+    volume_compliance: f32,
+    damping: f32,
+    gravity: f32,
+    n_substeps: usize,
+    shuffle_buffer_size: usize,
+    paused: bool,
+    should_reset: bool,
+    // Interaction parameters
+    interaction_force: f32,
+    interaction_radius: f32,
+    // Tearing thresholds
+    stretch_threshold: f32,    // Max stretch ratio before breaking (e.g., 2.0 = 200%)
+    compression_threshold: f32, // Min compression ratio before breaking (e.g., 0.3 = 30%)
+}
+
+impl Default for SimParams {
+    fn default() -> Self {
+        Self {
+            length_compliance: EDGE_COMPLIANCE,
+            volume_compliance: VOLUME_COMPLIANCE,
+            damping: 0.005, // Higher damping for stability
+            gravity: -9.81,
+            n_substeps: N_SUBSTEPS,
+            shuffle_buffer_size: usize::MAX, // Full shuffle by default
+            paused: false,
+            should_reset: false,
+            interaction_force: 40000.0,  // Much lower force
+            interaction_radius: 0.02,
+            stretch_threshold: 1.15,      // Break when stretched to 115% of original
+            compression_threshold: 0.6,  // Break when compressed to 60% of original
+        }
+    }
+}
+
+impl SimParams {
+    /// Convert to XpbdParams for the simulation.
+    fn to_xpbd_params(&self) -> xpbd::XpbdParams {
+        xpbd::XpbdParams {
+            n_substeps: self.n_substeps,
+            time_substep: TIME_STEP / (self.n_substeps as f32),
+            length_compliance: self.length_compliance,
+            volume_compliance: self.volume_compliance,
+            damping: self.damping,
+            shuffle_buffer_size: self.shuffle_buffer_size,
+            constant_field: Vector3::new(0.0, self.gravity, 0.0),
+            ..Default::default()
+        }
+    }
+}
 
 #[instrument]
 fn run_simulation(mesh_path: Option<&str>) {
@@ -183,10 +350,10 @@ fn run_simulation(mesh_path: Option<&str>) {
     let original_mesh = mesh.clone();
     let mut show_wireframe = true;
     let mut show_faces = false;
-    let mut should_reset = false;
+    let mut sim_params = SimParams::default();
 
     let (mut rl, thread) = raylib::init()
-        .size(800, 600)
+        .size(1000, 1000)
         .title("XPBD Cloth Simulation")
         .build();
 
@@ -195,89 +362,158 @@ fn run_simulation(mesh_path: Option<&str>) {
     rl.set_target_fps(TARGET_FPS.into());
 
     let initial_values = mesh.as_ref().map(|m| m.constraints.evaluate(&m.vertices));
-    let xpbd_params = xpbd::XpbdParams {
-        n_substeps: N_SUBSTEPS,
-        time_substep: TIME_STEP / (N_SUBSTEPS as f32),
-        length_compliance: EDGE_COMPLIANCE,
-        volume_compliance: VOLUME_COMPLIANCE,
-        ..Default::default()
-    };
     let mut state = mesh.as_ref().map(|m| {
         XpbdState::new(
             m.vertices.len(),
             m.constraints.edges.len() + m.constraints.tetrahedra.len(),
+            m.faces.len(),
         )
     });
 
+    // Track active interaction ray for visualization
+    let mut active_ray: Option<interaction::CylindricalRay> = None;
+
     while !rl.window_should_close() {
-        handle_input(
-            &rl,
-            &mut show_wireframe,
-            &mut show_faces,
-            &mut should_reset,
-            &mut camera,
-        );
+        handle_input(&rl, &mut show_wireframe, &mut show_faces, &mut sim_params);
         rl.update_camera(&mut camera, CameraMode::CAMERA_THIRD_PERSON);
 
-        // Reset simulation if space was pressed
-        if should_reset {
+        // Reset simulation if requested
+        if sim_params.should_reset {
             if let Some(original) = &original_mesh {
                 mesh = Some(original.clone());
-                if let Some(mesh) = &mesh {
+                if let Some(m) = &mesh {
                     state = Some(XpbdState::new(
-                        mesh.vertices.len(),
-                        mesh.constraints.edges.len() + mesh.constraints.tetrahedra.len(),
+                        m.vertices.len(),
+                        m.constraints.edges.len() + m.constraints.tetrahedra.len(),
+                        m.faces.len(),
                     ));
                 }
             }
-            should_reset = false;
+            sim_params.should_reset = false;
         }
 
-        if let Some(mesh) = &mut mesh {
-            let current_state = state.take().unwrap();
-            state = Some(xpbd::step_basic(
-                &xpbd_params,
-                current_state,
-                mesh,
-                initial_values.as_ref().unwrap(),
-                |v| v.position.y = v.position.y.max(0.0), // ground at y=0
-            ));
+        // Handle mouse interaction
+        if rl.is_mouse_button_down(MouseButton::MOUSE_BUTTON_LEFT) {
+            let mouse_x = rl.get_mouse_x();
+            let mouse_y = rl.get_mouse_y();
+            let screen_width = rl.get_screen_width();
+            let screen_height = rl.get_screen_height();
+
+            // Create cylindrical ray from camera through mouse position
+            let cyl_ray = interaction::CylindricalRay::from_camera_mouse(
+                &camera,
+                screen_width,
+                screen_height,
+                mouse_x,
+                mouse_y,
+                sim_params.interaction_radius,
+            );
+
+            // Store for visualization
+            active_ray = Some(cyl_ray);
+
+            if let (Some(mesh), Some(st), Some(initial_vals), Some(ray)) = (
+                &mut mesh,
+                &mut state,
+                &initial_values,
+                &active_ray,
+            ) {
+                // Compute interaction effect
+                let effect = interaction::InteractionEffect::from_cylindrical_ray(
+                    ray,
+                    &mesh.vertices,
+                    sim_params.interaction_force,
+                );
+
+                // Apply forces to affected vertices
+                st.apply_interaction_force(&effect);
+
+                // Break springs that exceed stretch or compression thresholds
+                mesh.tear_edges(
+                    st,
+                    initial_vals,
+                    sim_params.stretch_threshold,
+                    sim_params.compression_threshold,
+                );
+            }
+        } else {
+            active_ray = None;
+        }
+
+        // Only step simulation if not paused
+        if !sim_params.paused {
+            if let Some(mesh) = &mut mesh {
+                let current_state = state.take().unwrap();
+                let xpbd_params = sim_params.to_xpbd_params();
+                state = Some(xpbd::step_basic(
+                    &xpbd_params,
+                    current_state,
+                    mesh,
+                    initial_values.as_ref().unwrap(),
+                    |v| v.position.y = v.position.y.max(0.0), // ground at y=0
+                ));
+            }
         }
 
         let mut d = rl.begin_drawing(&thread);
-        d.clear_background(Color::new(205, 206, 245, 255)); // Light blue sky
+        d.clear_background(Color::RAYWHITE);
 
         {
             let mut d3 = d.begin_mode3D(camera);
 
-            // Draw large white floor plane
-            d3.draw_plane(
-                Vector3::new(0.0, -0.1, 0.0),
-                Vector2::new(50.0, 50.0),
-                Color::new(248, 248, 255, 255), // Ghost white
-            );
-
-            // Always draw ground plane and grid with better contrast
+            // Always draw ground plane and grid
             d3.draw_plane(
                 Vector3::new(0.0, 0.0, 0.0),
                 Vector2::new(10.0, 10.0),
-                Color::new(180, 180, 180, 255), // Light gray
+                Color::GRAY,
             );
             d3.draw_grid(20, 2.0);
 
             // Draw mesh if loaded
-            if let Some(mesh) = &mesh {
-                draw_mesh(
-                    &mut d3,
-                    mesh,
-                    state.as_ref().unwrap(),
-                    show_wireframe,
-                    show_faces,
-                );
+            if let (Some(mesh), Some(st)) = (&mesh, &state) {
+                draw_mesh(&mut d3, mesh, st, show_wireframe, show_faces);
+            }
+
+            // Draw interaction ray cylinder when active
+            if let Some(ray) = &active_ray {
+                let ray_length = 100.0; // Draw ray extending far into scene
+                let end_point = ray.ray.origin + ray.ray.direction * ray_length;
+                
+                // Draw cylinder as multiple rings along the ray
+                let num_segments = 20;
+                for i in 0..num_segments {
+                    let t = i as f32 / num_segments as f32;
+                    let center = ray.ray.origin + ray.ray.direction * (ray_length * t);
+                    
+                    // Draw a ring (circle) at each position
+                    // We need to find perpendicular vectors to the ray direction
+                    let up = if ray.ray.direction.y.abs() < 0.9 {
+                        Vector3::new(0.0, 1.0, 0.0)
+                    } else {
+                        Vector3::new(1.0, 0.0, 0.0)
+                    };
+                    let right = ray.ray.direction.cross(up).normalized();
+                    let actual_up = right.cross(ray.ray.direction).normalized();
+                    
+                    // Draw ring as line segments
+                    let ring_segments = 16;
+                    for j in 0..ring_segments {
+                        let angle1 = (j as f32 / ring_segments as f32) * std::f32::consts::TAU;
+                        let angle2 = ((j + 1) as f32 / ring_segments as f32) * std::f32::consts::TAU;
+                        
+                        let p1 = center + (right * angle1.cos() + actual_up * angle1.sin()) * ray.radius;
+                        let p2 = center + (right * angle2.cos() + actual_up * angle2.sin()) * ray.radius;
+                        
+                        d3.draw_line_3D(p1, p2, Color::RED.alpha(0.5));
+                    }
+                }
+                
+                // Draw center line of the ray
+                d3.draw_line_3D(ray.ray.origin, end_point, Color::YELLOW);
             }
         }
 
-        draw_ui(&mut d);
+        draw_ui(&mut d, &sim_params, mesh.as_ref());
     }
 }
 

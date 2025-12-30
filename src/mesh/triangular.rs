@@ -59,6 +59,7 @@ impl ConstraintSet<Vec<Vertex>, TriConstraintValues> for TriConstraints {
                     .zip(reference.edge_lengths.iter().copied()),
                 params.l_threshold_length,
                 params.length_compliance / (params.time_substep * params.time_substep),
+                params.shuffle_buffer_size,
             )
             .process(
                 self.weak_bending
@@ -66,6 +67,7 @@ impl ConstraintSet<Vec<Vertex>, TriConstraintValues> for TriConstraints {
                     .zip(reference.weak_bending_lengths.iter().copied()),
                 1.1 * params.l_threshold_length, // stronger
                 0.9 * params.length_compliance / (params.time_substep * params.time_substep), // stiffer
+                params.shuffle_buffer_size,
             );
     }
 }

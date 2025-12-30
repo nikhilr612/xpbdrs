@@ -170,7 +170,7 @@ pub trait Spatial {
 }
 
 impl Spatial for Vec<Vertex> {
-    #[allow(clippy::cast_precision_loss)]
+    // consider: #[allow(clippy::cast_precision_loss)]
     fn centroid(&self) -> Vector3 {
         self.iter()
             .map(|v| v.position)

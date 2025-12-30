@@ -31,6 +31,7 @@ pub trait Constraint<const ARITY: usize> {
 
 /// Apply constraint correction to all participants in vertices `V` with time-scaled compliance `alpha`, given the reference value.
 /// Returns the computed Lagrange multiplier.
+// consider: #[allow(clippy::needless_pass_by_value)]
 pub fn apply_constraint<const N: usize, V>(
     vag: ValueGrad<N>,
     reference_value: f32,

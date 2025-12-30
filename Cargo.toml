@@ -17,8 +17,16 @@ name = "inflation_demo"
 path = "examples/inflation_demo.rs"
 
 [[example]]
-name = "cloth_sim"
-path = "examples/cloth.rs"
+name = "deform_demo"
+path = "examples/plane_surface_deformation.rs"
+
+[[example]]
+name = "cloth_draping"
+path = "examples/cloth_draping.rs"
+
+[[example]]
+name = "spot_in_box"
+path = "examples/spot_in_box.rs"
 
 [dependencies]
 bincode = "1.3.3"

@@ -146,7 +146,7 @@ fn run_simulation(mesh_path: Option<&str>) {
         (true, true, false, false, 0.0);
 
     let (mut rl, thread) = raylib::init()
-        .size(1200, 800)
+        .size(800, 800)
         .title("XPBD Inflation Demo")
         .build();
     let (camera_pos, target) = setup_camera(Some(&mesh));

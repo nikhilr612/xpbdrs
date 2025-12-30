@@ -90,7 +90,7 @@ fn draw_mesh(
         mesh.draw_faces(d3, state, Color::new(255, 215, 0, 200));
     }
     if show_wireframe {
-        mesh.draw_wireframe(d3, Color::new(30, 144, 255, 255));
+        mesh.draw_wireframe(d3, state, Color::new(30, 144, 255, 255));
     }
 }
 
@@ -167,6 +167,7 @@ fn run_simulation(mesh_path: Option<&str>) {
     let mut state = XpbdState::new(
         mesh.vertices.len(),
         mesh.constraints.edges.len() + mesh.constraints.tetrahedra.len(),
+        mesh.faces.len(),
     );
     info!("Starting inflation demo");
 
@@ -186,6 +187,7 @@ fn run_simulation(mesh_path: Option<&str>) {
             state = XpbdState::new(
                 mesh.vertices.len(),
                 mesh.constraints.edges.len() + mesh.constraints.tetrahedra.len(),
+                mesh.faces.len(),
             );
             simulation_time = 0.0;
             should_reset = false;
@@ -193,6 +195,7 @@ fn run_simulation(mesh_path: Option<&str>) {
 
         if !paused {
             simulation_time += TIME_STEP;
+            // Update p_volume based on inflation animation
             xpbd_params.p_volume = calculate_inflation_factor(simulation_time);
             state = xpbd::step_basic(&xpbd_params, state, &mut mesh, &initial_values, |v| {
                 v.position.y = v.position.y.max(0.0)

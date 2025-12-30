@@ -190,12 +190,21 @@ impl Tetrahedral {
         mesh
     }
 
-    /// Draw wireframe of the mesh, skipping broken/inactive edges.
+    /// Draw wireframe of the mesh. Only draws edges that are active and belong to at least one non-torn face.
     pub fn draw_wireframe(&self, d3: &mut RaylibMode3D<RaylibDrawHandle>, state: &XpbdState, color: Color) {
-        // Draw explicit edges if available, skip inactive (broken) constraints
         for (edge_idx, edge) in self.constraints.edges.iter().enumerate() {
-            // Skip broken edges
+            // Skip inactive (removed) edges
             if state.constraint_inactive(edge_idx) {
+                continue;
+            }
+            
+            // Skip edges that don't belong to any non-torn face
+            let has_active_face = self.faces.iter().enumerate().any(|(face_idx, face)| {
+                !state.face_torn(face_idx) &&
+                face.edges.iter().filter_map(|e| e.as_ref()).any(|e| e.0 as usize == edge_idx)
+            });
+            
+            if !has_active_face {
                 continue;
             }
             
@@ -203,14 +212,12 @@ impl Tetrahedral {
                 self.vertices.get((edge.0.0 - 1) as usize),
                 self.vertices.get((edge.1.0 - 1) as usize),
             ) {
-                let start = v1.position;
-                let end = v2.position;
-                d3.draw_line_3D(start, end, color);
+                d3.draw_line_3D(v1.position, v2.position, color);
             }
         }
     }
 
-    /// Draw filled faces.
+    /// Draw filled faces. Only draws faces that are not torn.
     pub fn draw_faces(
         &self,
         d3: &mut RaylibMode3D<RaylibDrawHandle>,
@@ -218,38 +225,33 @@ impl Tetrahedral {
         color: Color,
     ) {
         for (face_idx, face) in self.faces.iter().enumerate() {
+            // Skip torn faces
+            if state.face_torn(face_idx) {
+                continue;
+            }
+            
             let verts = [
                 self.vertices[(face.verts[0].0 - 1) as usize],
                 self.vertices[(face.verts[1].0 - 1) as usize],
                 self.vertices[(face.verts[2].0 - 1) as usize],
             ];
 
-            // Check if this face is torn (either explicitly or via broken edge constraints)
-            let has_broken_edge = face
-                .edges
-                .iter()
-                .filter_map(|e| e.as_ref())
-                .any(|e| state.constraint_inactive(e.0 as usize));
-            
-            if !state.face_torn(face_idx) && !has_broken_edge {
-                d3.draw_triangle3D(
-                    verts[0].position,
-                    verts[1].position,
-                    verts[2].position,
-                    color,
-                );
-            }
+            d3.draw_triangle3D(
+                verts[0].position,
+                verts[1].position,
+                verts[2].position,
+                color,
+            );
         }
     }
-    /// Compute edge deformations and break springs that exceed stretch or compression thresholds.
+    /// Tear edges based on deformation thresholds and cascade removals.
     ///
-    /// This function checks each edge constraint:
-    /// - If stretched beyond `stretch_threshold` (e.g., 2.5 = 250% of original length)
-    /// - If compressed beyond `compression_threshold` (e.g., 0.2 = 20% of original length)
-    ///
-    /// When broken:
-    /// 1. The edge constraint is deactivated (spring breaks - no more forces)
-    /// 2. Velocities of connected vertices are heavily dampened to prevent flying off
+    /// Logic:
+    /// 1. Remove edges exceeding stretch/compression thresholds
+    /// 2. Remove faces that have ANY removed edge
+    /// 3. Remove edges that don't belong to any remaining face
+    /// 4. Repeat 2-3 until no changes
+    /// 5. Freeze vertices with no remaining edges
     pub fn tear_edges(
         &self,
         state: &mut XpbdState,
@@ -257,32 +259,75 @@ impl Tetrahedral {
         stretch_threshold: f32,
         compression_threshold: f32,
     ) {
+        // Step 1: Remove edges exceeding thresholds
         for (edge_idx, edge) in self.constraints.edges.iter().enumerate() {
-            if !state.constraint_inactive(edge_idx) {
-                // Get current edge length
-                let current_length = (self.vertices[(edge.1.0 - 1) as usize].position
-                    - self.vertices[(edge.0.0 - 1) as usize].position)
-                    .length();
-
-                // Get original edge length
-                let original_length = initial_values.lengths[edge_idx];
-
-                // Compute stretch ratio (current / original)
-                let stretch_ratio = current_length / original_length;
-                
-                // Break if stretched too much OR compressed too much
-                let should_break = stretch_ratio > stretch_threshold || stretch_ratio < compression_threshold;
-                
-                if should_break {
-                    // Break the spring - deactivate the constraint
-                    state.deactivate_constraint(edge_idx);
-                    
-                    // Heavily dampen velocities of connected vertices to prevent flying off
-                    let v0_idx = (edge.0.0 - 1) as usize;
-                    let v1_idx = (edge.1.0 - 1) as usize;
-                    state.dampen_vertex_velocity(v0_idx, 0.0); // Stop completely
-                    state.dampen_vertex_velocity(v1_idx, 0.0);
+            if state.constraint_inactive(edge_idx) {
+                continue;
+            }
+            
+            let p0 = self.vertices[(edge.0.0 - 1) as usize].position;
+            let p1 = self.vertices[(edge.1.0 - 1) as usize].position;
+            let current_length = (p1 - p0).length();
+            let original_length = initial_values.lengths[edge_idx];
+            let ratio = current_length / original_length;
+            
+            if ratio > stretch_threshold || ratio < compression_threshold {
+                state.deactivate_constraint(edge_idx);
+            }
+        }
+        
+        // Steps 2-3: Cascade face and edge removals until stable
+        loop {
+            let mut changed = false;
+            
+            // Remove faces that have any inactive edge
+            for (face_idx, face) in self.faces.iter().enumerate() {
+                if state.face_torn(face_idx) {
+                    continue;
                 }
+                
+                let has_inactive_edge = face.edges.iter()
+                    .filter_map(|e| e.as_ref())
+                    .any(|e| state.constraint_inactive(e.0 as usize));
+                
+                if has_inactive_edge {
+                    state.tear_face(face_idx);
+                    changed = true;
+                }
+            }
+            
+            // Remove edges that don't belong to any active face
+            for (edge_idx, _) in self.constraints.edges.iter().enumerate() {
+                if state.constraint_inactive(edge_idx) {
+                    continue;
+                }
+                
+                let belongs_to_active_face = self.faces.iter().enumerate().any(|(face_idx, face)| {
+                    !state.face_torn(face_idx) &&
+                    face.edges.iter().filter_map(|e| e.as_ref()).any(|e| e.0 as usize == edge_idx)
+                });
+                
+                if !belongs_to_active_face {
+                    state.deactivate_constraint(edge_idx);
+                    changed = true;
+                }
+            }
+            
+            if !changed {
+                break;
+            }
+        }
+        
+        // Step 5: Freeze vertices with no active edges
+        for (vert_idx, _) in self.vertices.iter().enumerate() {
+            let vert_id = (vert_idx + 1) as u32;
+            
+            let has_active_edge = self.constraints.edges.iter().enumerate().any(|(edge_idx, edge)| {
+                !state.constraint_inactive(edge_idx) && (edge.0.0 == vert_id || edge.1.0 == vert_id)
+            });
+            
+            if !has_active_edge {
+                state.dampen_vertex_velocity(vert_idx, 0.0);
             }
         }
     }

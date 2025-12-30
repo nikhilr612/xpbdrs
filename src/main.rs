@@ -118,7 +118,7 @@ fn handle_input(rl: &RaylibHandle, show_wireframe: &mut bool, show_faces: &mut b
     }
     
     // Parameter adjustment step sizes
-    let compliance_step = 0.0000001;
+    let compliance_step = 0.00000001;
     let damping_step = 0.0005;
     let gravity_step = 0.1;
     
@@ -147,9 +147,9 @@ fn handle_input(rl: &RaylibHandle, show_wireframe: &mut bool, show_faces: &mut b
     }
     
     // Interaction force: 7/8 to increase/decrease
-    let force_step = 1.0;
+    let force_step = 5.0;
     if rl.is_key_pressed(KeyboardKey::KEY_SEVEN) {
-        params.interaction_force = (params.interaction_force + force_step).min(50.0);
+        params.interaction_force = (params.interaction_force + force_step).min(1000.0);
     }
     if rl.is_key_pressed(KeyboardKey::KEY_EIGHT) {
         params.interaction_force = (params.interaction_force - force_step).max(0.5);
@@ -288,7 +288,7 @@ fn load_mesh(mesh_path: &str) -> Option<mesh::Tetrahedral> {
 const TARGET_FPS: u16 = 60;
 const TIME_STEP: f32 = 1.0 / TARGET_FPS as f32;
 const N_SUBSTEPS: usize = 30;
-const EDGE_COMPLIANCE: f32 = 0.000001; // Stiffer edges for stability
+const EDGE_COMPLIANCE: f32 = 0.00001; // Stiffer edges for stability
 const VOLUME_COMPLIANCE: f32 = 0.00;
 
 /// Mutable simulation state for live parameter tuning.
@@ -314,16 +314,16 @@ impl Default for SimParams {
         Self {
             length_compliance: EDGE_COMPLIANCE,
             volume_compliance: VOLUME_COMPLIANCE,
-            damping: 0.05, // Higher damping for stability
+            damping: 0.005, // Higher damping for stability
             gravity: -9.81,
             n_substeps: N_SUBSTEPS,
             shuffle_buffer_size: usize::MAX, // Full shuffle by default
             paused: false,
             should_reset: false,
-            interaction_force: 5.0,  // Much lower force
-            interaction_radius: 0.1,
-            stretch_threshold: 2.5,      // Break when stretched to 250% of original
-            compression_threshold: 0.2,  // Break when compressed to 20% of original
+            interaction_force: 40000.0,  // Much lower force
+            interaction_radius: 0.02,
+            stretch_threshold: 1.15,      // Break when stretched to 115% of original
+            compression_threshold: 0.6,  // Break when compressed to 60% of original
         }
     }
 }
@@ -476,7 +476,7 @@ fn run_simulation(mesh_path: Option<&str>) {
 
             // Draw interaction ray cylinder when active
             if let Some(ray) = &active_ray {
-                let ray_length = 50.0; // Draw ray extending far into scene
+                let ray_length = 100.0; // Draw ray extending far into scene
                 let end_point = ray.ray.origin + ray.ray.direction * ray_length;
                 
                 // Draw cylinder as multiple rings along the ray

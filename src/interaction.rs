@@ -124,7 +124,7 @@ impl InteractionEffect {
                 
                 // Inverse square law falloff: F = k / (r^2 + epsilon)
                 // Add small epsilon to avoid division by zero at the center
-                let epsilon = 0.01;
+                let epsilon = 0.000001;
                 let falloff = 1.0 / (distance_to_ray_axis * distance_to_ray_axis + epsilon);
 
                 // Force along ray direction with inverse square falloff

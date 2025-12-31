@@ -42,7 +42,7 @@ const CLOTH_MASS: f32 = 1.0; // Same mass for all cloth vertices
 const CLOTH_INV_MASS: f32 = 1.0 / CLOTH_MASS;
 
 // Sphere collision parameters
-const SPHERE_CENTER: Vector3 = Vector3::new(0.0, 0.0, 0.0);
+const SPHERE_CENTER: glam::Vec3 = glam::Vec3::new(0.0, 0.0, 0.0);
 const COLLISION_MARGIN: f32 = 0.05;
 
 fn generate_cloth_mesh(resolution: usize, size: f32, spawn_height: f32) -> TriangulatedSurface {
@@ -60,7 +60,7 @@ fn generate_cloth_mesh(resolution: usize, size: f32, spawn_height: f32) -> Trian
             let y = spawn_height;
 
             vertices.push(Vertex {
-                position: Vector3::new(x, y, z),
+                position: glam::Vec3::new(x, y, z),
                 inv_mass: CLOTH_INV_MASS,
             });
         }
@@ -188,7 +188,7 @@ fn run_simulation(resolution: usize, size: f32, spawn_height: f32, sphere_radius
 
         // Physics simulation
         let acceleration_field = |_vertex: &Vertex| {
-            Vector3::new(0.0, -9.81, 0.0) // Gravity
+            glam::Vec3::new(0.0, -9.81, 0.0) // Gravity
         };
 
         let mut collision = |vertex: &mut Vertex| {
@@ -200,7 +200,7 @@ fn run_simulation(resolution: usize, size: f32, spawn_height: f32, sphere_radius
                 let normal = if distance > 0.001 {
                     to_vertex / distance
                 } else {
-                    Vector3::new(0.0, 1.0, 0.0) // Default upward normal
+                    glam::Vec3::new(0.0, 1.0, 0.0) // Default upward normal
                 };
                 vertex.position = SPHERE_CENTER + normal * (sphere_radius + COLLISION_MARGIN);
             }
@@ -235,9 +235,15 @@ fn run_simulation(resolution: usize, size: f32, spawn_height: f32, sphere_radius
             d3.draw_grid(20, 1.0);
 
             // Sphere to drape over
-            d3.draw_sphere(SPHERE_CENTER, sphere_radius, Color::new(200, 100, 100, 200));
+            const RAY_SPHERE_CENTER: Vector3 =
+                Vector3::new(SPHERE_CENTER.x, SPHERE_CENTER.y, SPHERE_CENTER.z);
+            d3.draw_sphere(
+                RAY_SPHERE_CENTER,
+                sphere_radius,
+                Color::new(200, 100, 100, 200),
+            );
             d3.draw_sphere_wires(
-                SPHERE_CENTER,
+                RAY_SPHERE_CENTER,
                 sphere_radius,
                 16,
                 16,

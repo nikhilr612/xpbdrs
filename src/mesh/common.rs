@@ -1,6 +1,6 @@
 //! Common data structures and utilities shared across different mesh types.
 
-use raylib::prelude::*;
+use glam::Vec3;
 use std::collections::HashSet;
 use tracing::{debug, warn};
 
@@ -13,7 +13,7 @@ fn default_inv_mass() -> f32 {
 #[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Vertex {
     /// 3D position of the vertex.
-    pub position: Vector3,
+    pub position: Vec3,
     /// Inverse mass (1/mass) of the vertex.
     #[serde(default = "default_inv_mass")]
     pub inv_mass: f32,
@@ -160,37 +160,37 @@ impl std::ops::IndexMut<VertexId> for Vec<Vertex> {
 /// This trait is not intended to be replete with all possible spatial operations, but is instead a conservative interface.
 pub trait Spatial {
     /// Translate all vertices by a vector.
-    fn translate(&mut self, by: Vector3);
+    fn translate(&mut self, by: Vec3);
 
     /// Get bounding box of the vertices as (min, max) corners.
-    fn bounding_box(&self) -> (Vector3, Vector3);
+    fn bounding_box(&self) -> (Vec3, Vec3);
 
     /// Get centroid of the vertices.
-    fn centroid(&self) -> Vector3;
+    fn centroid(&self) -> Vec3;
 }
 
 impl Spatial for Vec<Vertex> {
     // consider: #[allow(clippy::cast_precision_loss)]
-    fn centroid(&self) -> Vector3 {
+    fn centroid(&self) -> Vec3 {
         self.iter()
             .map(|v| v.position)
-            .fold(Vector3::zero(), |acc, pos| acc + pos)
+            .fold(Vec3::ZERO, |acc, pos| acc + pos)
             / (self.len() as f32).max(1.0)
     }
 
-    fn translate(&mut self, by: Vector3) {
+    fn translate(&mut self, by: Vec3) {
         for vertex in self {
             vertex.position += by;
         }
     }
 
-    fn bounding_box(&self) -> (Vector3, Vector3) {
+    fn bounding_box(&self) -> (Vec3, Vec3) {
         if self.is_empty() {
-            return (Vector3::zero(), Vector3::zero());
+            return (Vec3::ZERO, Vec3::ZERO);
         }
 
-        let mut min = Vector3::new(f32::INFINITY, f32::INFINITY, f32::INFINITY);
-        let mut max = Vector3::new(f32::NEG_INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY);
+        let mut min = Vec3::new(f32::INFINITY, f32::INFINITY, f32::INFINITY);
+        let mut max = Vec3::new(f32::NEG_INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY);
 
         for vertex in self {
             min.x = min.x.min(vertex.position.x);
@@ -213,16 +213,16 @@ mod tests {
     fn test_spatial_translate() {
         let mut vertices = vec![
             Vertex {
-                position: Vector3::new(0.0, 0.0, 0.0),
+                position: Vec3::new(0.0, 0.0, 0.0),
                 inv_mass: 1.0,
             },
             Vertex {
-                position: Vector3::new(1.0, 2.0, 3.0),
+                position: Vec3::new(1.0, 2.0, 3.0),
                 inv_mass: 0.5,
             },
         ];
 
-        let translation = Vector3::new(10.0, 20.0, 30.0);
+        let translation = Vec3::new(10.0, 20.0, 30.0);
         let original_positions: Vec<_> = vertices.iter().map(|v| v.position).collect();
 
         vertices.translate(translation);
@@ -239,36 +239,36 @@ mod tests {
     fn test_spatial_bounding_box() {
         let vertices = vec![
             Vertex {
-                position: Vector3::new(-1.0, -2.0, -3.0),
+                position: Vec3::new(-1.0, -2.0, -3.0),
                 inv_mass: 1.0,
             },
             Vertex {
-                position: Vector3::new(4.0, 5.0, 6.0),
+                position: Vec3::new(4.0, 5.0, 6.0),
                 inv_mass: 1.0,
             },
             Vertex {
-                position: Vector3::new(2.0, 1.0, 0.0),
+                position: Vec3::new(2.0, 1.0, 0.0),
                 inv_mass: 1.0,
             },
         ];
 
         let (min, max) = vertices.bounding_box();
 
-        assert_eq!(min, Vector3::new(-1.0, -2.0, -3.0));
-        assert_eq!(max, Vector3::new(4.0, 5.0, 6.0));
+        assert_eq!(min, Vec3::new(-1.0, -2.0, -3.0));
+        assert_eq!(max, Vec3::new(4.0, 5.0, 6.0));
     }
 
     #[test]
     fn test_spatial_bounding_box_single_vertex() {
         let vertices = vec![Vertex {
-            position: Vector3::new(42.0, -17.0, 99.0),
+            position: Vec3::new(42.0, -17.0, 99.0),
             inv_mass: 1.0,
         }];
 
         let (min, max) = vertices.bounding_box();
 
-        assert_eq!(min, Vector3::new(42.0, -17.0, 99.0));
-        assert_eq!(max, Vector3::new(42.0, -17.0, 99.0));
+        assert_eq!(min, Vec3::new(42.0, -17.0, 99.0));
+        assert_eq!(max, Vec3::new(42.0, -17.0, 99.0));
     }
 
     #[test]
@@ -277,14 +277,14 @@ mod tests {
 
         let (min, max) = vertices.bounding_box();
 
-        assert_eq!(min, Vector3::zero());
-        assert_eq!(max, Vector3::zero());
+        assert_eq!(min, Vec3::ZERO);
+        assert_eq!(max, Vec3::ZERO);
     }
 
     #[test]
     fn test_spatial_translate_empty() {
         let mut vertices: Vec<Vertex> = vec![];
-        vertices.translate(Vector3::new(1.0, 2.0, 3.0));
+        vertices.translate(Vec3::new(1.0, 2.0, 3.0));
         // Should not panic and remain empty
         assert!(vertices.is_empty());
     }

@@ -8,37 +8,46 @@ edition = "2024"
 name = "xpbdrs"
 path = "src/lib.rs"
 
-[[bin]]
-name = "xpbdrsc"
-path = "src/main.rs"
-
 [[example]]
 name = "inflation_demo"
 path = "examples/inflation_demo.rs"
+required-features = ["raylib"]
 
 [[example]]
 name = "deform_demo"
 path = "examples/plane_surface_deformation.rs"
+required-features = ["raylib"]
 
 [[example]]
 name = "cloth_draping"
 path = "examples/cloth_draping.rs"
+required-features = ["raylib"]
 
 [[example]]
 name = "spot_in_box"
 path = "examples/spot_in_box.rs"
+required-features = ["raylib"]
+
+[[example]]
+name = "basic_demo"
+path = "examples/basic_demo.rs"
+required-features = ["raylib"]
 
 [dependencies]
 bincode = "1.3.3"
 bitvec = "1.0.1"
-clap = { version = "4.5.53", features = ["derive"] }
-raylib = { version="5.5.1", features= ["with_serde"] }
+glam = { version = "0.30.9", features = ["std", "serde"] }
+raylib = { version="5.5.1", features = ["with_serde"], optional = true }
 serde = { version = "1.0.228", features = ["derive"] }
 tracing = "0.1.44"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+[features]
+raylib = ["dep:raylib"]
 
 [dev-dependencies]
 criterion = "0.5.1"
+clap = { version = "4.5.53", features = ["derive"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
 [[bench]]
 name = "benchmarks"

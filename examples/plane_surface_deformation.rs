@@ -1,6 +1,7 @@
 //! Plane surface deformation simulation demo using triangulated surface mesh.
 
 use clap::Parser;
+use glam::Vec3;
 use raylib::prelude::*;
 use tracing::info;
 
@@ -60,7 +61,7 @@ fn generate_plane_surface_mesh(resolution: usize, size: f32) -> TriangulatedSurf
             };
 
             vertices.push(Vertex {
-                position: Vector3::new(x, y, z),
+                position: glam::Vec3::new(x, y, z),
                 inv_mass,
             });
         }
@@ -95,6 +96,7 @@ fn generate_plane_surface_mesh(resolution: usize, size: f32) -> TriangulatedSurf
 fn setup_camera(mesh: &TriangulatedSurface) -> (Vector3, Vector3) {
     let (min, max) = mesh.vertices.bounding_box();
     let center = (min + max) * 0.5;
+    let center = Vector3::new(center.x, center.y, center.z);
     let distance = (max - min).length().max(1.0) * 1.5;
     let camera_pos = center + Vector3::new(distance * 0.7, distance * 0.5, distance * 0.7);
     (camera_pos, center)
@@ -131,8 +133,6 @@ fn handle_input(
 fn run_simulation(resolution: usize, size: f32) {
     let mut mesh = generate_plane_surface_mesh(resolution, size);
     let original_mesh = mesh.clone();
-    let original_positions: Vec<Vector3> = mesh.vertices.iter().map(|v| v.position).collect();
-
     let mut show_wireframe = true;
     let mut show_faces = true;
     let mut should_reset = false;
@@ -191,9 +191,9 @@ fn run_simulation(resolution: usize, size: f32) {
         let surface_center = mesh.vertices.centroid();
         let acceleration_field = |vertex: &Vertex| {
             if vertex.inv_mass <= BOUNDARY_INV_MASS * 1.1 {
-                Vector3::zero() // Fixed boundary vertices
+                glam::Vec3::ZERO // Fixed boundary vertices
             } else {
-                let mut acceleration = Vector3::new(0.0, -9.81, 0.0); // Gravity
+                let mut acceleration = Vec3::new(0.0, -9.81, 0.0); // Gravity
 
                 // Puncturing force
                 if (PUNCTURE_START_TIME..PUNCTURE_START_TIME + PUNCTURE_DURATION)
@@ -220,13 +220,6 @@ fn run_simulation(resolution: usize, size: f32) {
                 &mut |_v| {},
                 &acceleration_field,
             );
-        }
-
-        // Apply boundary constraints
-        for (i, vertex) in mesh.vertices.iter_mut().enumerate() {
-            if vertex.inv_mass <= BOUNDARY_INV_MASS * 1.1 {
-                vertex.position = original_positions[i];
-            }
         }
 
         let mut d = rl.begin_drawing(&thread);

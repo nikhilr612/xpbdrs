@@ -64,7 +64,7 @@ let params = XpbdParams {
 // Initialize simulation state
 let mut state = XpbdState::new(
     mesh.vertices.len(), 
-    mesh.constraints.total_count()
+    mesh.constraints.size()
 );
 
 // Simulation loop with ground collision
@@ -85,13 +85,13 @@ loop {
 # Convert TetGen mesh to optimized binary format
 cargo run -- export -i mesh_prefix -o output.bin
 
-# Launch interactive simulation viewer  
-cargo run -- demo mesh.bin
+# Launch demo softbody viwer (requires raylib feature)
+cargo run --features raylib -- demo mesh.bin
 
-# Run example simulations
-cargo run --example cloth_draping
-cargo run --example inflation_demo  
-cargo run --example spot_in_box
+# Run example simulations (require raylib feature for visualization)
+cargo run --features raylib --example cloth_draping
+cargo run --features raylib --example inflation_demo  
+cargo run --features raylib --example spot_in_box
 ```
 
 ## Examples
@@ -103,11 +103,18 @@ The `examples/` directory contains comprehensive demonstrations of library capab
 - **Inflation Demo**: Soft body volume scaling using tetrahedral constraints
 - **Spot in Box**: Constrained dynamics with periodic force impulses
 
-Each example includes parameter customization, interactive controls, and visual output modes.
+Each example includes parameter customization, interactive controls, and visual output modes. All examples require the `raylib` feature to be enabled for 3D visualization.
+
+**Note**: The core XPBD simulation library can be used without raylib for headless physics computation. Only the examples, demos, and visualization components require the raylib feature.
 
 ## Dependencies
 
-- **raylib**: 3D rendering and user interaction
+- **glam**: Vector and matrix mathematics with serde support
 - **serde/bincode**: Mesh serialization  
 - **tracing**: Structured logging
-- **clap**: Command-line argument parsing
+- **clap**: Command-line argument parsing (dev dependency)
+
+### Optional Features
+
+- **raylib** (optional): 3D rendering and user interaction for examples and demos
+  - Enable with `cargo run --features raylib` or `default-features = false` in Cargo.toml

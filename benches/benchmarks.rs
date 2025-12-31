@@ -1,5 +1,5 @@
 use criterion::{BatchSize, Criterion, black_box, criterion_group, criterion_main};
-use raylib::math::Vector3;
+use glam::Vec3;
 use xpbdrs::{
     constraint::{Constraint, apply_constraint},
     mesh::{Tetrahedral, tetrahedral::TetConstraintValues},
@@ -119,7 +119,7 @@ fn xpbd_substep(c: &mut Criterion) {
                     &mesh.constraints,
                     &initial_values,
                     &mut |_| {},
-                    &|_| Vector3::new(0.0, -9.81, 0.0),
+                    &|_| Vec3::new(0.0, -9.81, 0.0),
                 );
             },
             BatchSize::SmallInput,
@@ -166,12 +166,12 @@ fn kinematic_integration(c: &mut Criterion) {
         b.iter_batched(
             || {
                 let vertices = mesh.vertices.clone();
-                let velocities = vec![Vector3::new(0.1, 0.0, 0.0); vertices.len()];
+                let velocities = vec![Vec3::new(0.1, 0.0, 0.0); vertices.len()];
                 (vertices, velocities)
             },
             |(mut vertices, mut velocities)| {
                 let dt = 0.0016;
-                let gravity = Vector3::new(0.0, -9.81, 0.0);
+                let gravity = Vec3::new(0.0, -9.81, 0.0);
 
                 for (i, vertex) in vertices.iter_mut().enumerate() {
                     velocities[i] += gravity * dt;

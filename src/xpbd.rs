@@ -3,7 +3,7 @@
 use std::ops::IndexMut;
 
 use bitvec::vec::BitVec;
-use raylib::math::Vector3;
+use glam::Vec3;
 
 use crate::{
     constraint::{Constraint, apply_constraint},
@@ -13,11 +13,11 @@ use crate::{
 /// State for Extended Position Based Dynamics simulation.
 pub struct XpbdState {
     /// Velocities of each particle.
-    velocities: Vec<Vector3>,
+    velocities: Vec<Vec3>,
     /// Boolean vector indicating inactive constraints by index.
     inactive_constraints: BitVec,
     /// Vector to store old positions during substeps.
-    position_buffer: Vec<Vector3>,
+    position_buffer: Vec<Vec3>,
 }
 
 impl XpbdState {
@@ -76,8 +76,8 @@ impl XpbdState {
     #[must_use]
     pub fn new(n_vertices: usize, n_constraints: usize) -> Self {
         Self {
-            velocities: vec![Vector3::zero(); n_vertices],
-            position_buffer: vec![Vector3::zero(); n_vertices],
+            velocities: vec![Vec3::ZERO; n_vertices],
+            position_buffer: vec![Vec3::ZERO; n_vertices],
             inactive_constraints: BitVec::repeat(false, n_constraints),
         }
     }
@@ -137,7 +137,7 @@ pub fn step_basic<F>(
 where
     F: FnMut(&mut Vertex),
 {
-    let acceleration_due_to_gravity = |_: &Vertex| Vector3::new(0.0, -9.81, 0.0);
+    let acceleration_due_to_gravity = |_: &Vertex| Vec3::new(0.0, -9.81, 0.0);
     for _ in 0..params.n_substeps {
         substep(
             params,
@@ -179,7 +179,7 @@ pub fn substep<V, I, F, C, A>(
     V: IndexMut<VertexId, Output = Vertex>,
     for<'a> &'a mut V: IntoIterator<Item = &'a mut Vertex>,
     F: FnMut(&mut Vertex),
-    A: Fn(&Vertex) -> Vector3,
+    A: Fn(&Vertex) -> Vec3,
 {
     let old_positions = &mut state.position_buffer; // use buffer for old positions.
 

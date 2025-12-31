@@ -1,6 +1,6 @@
 //! Tetrahedral mesh implementation.
 
-use raylib::prelude::*;
+use glam::Vec3;
 use std::io::Write;
 use tracing::{debug, info};
 
@@ -8,7 +8,7 @@ use super::common::{Result, TetrahedronId, Triangle, Vertex, dedup_with_warning}
 use super::tgimport::TetgenParser;
 use crate::constraint::Constraint;
 use crate::mesh::{Edge, Tetrahedron};
-use crate::xpbd::{ConstraintSet, XpbdState};
+use crate::xpbd::ConstraintSet;
 
 /// Values computed from tetrahedral constraints.
 pub struct TetConstraintValues {
@@ -78,7 +78,7 @@ impl Tetrahedral {
     /// # Returns
     /// `None` if the tetrahedron ID is invalid or references invalid vertices.
     #[must_use]
-    pub fn corners(&self, id: TetrahedronId) -> Option<[Vector3; 4]> {
+    pub fn corners(&self, id: TetrahedronId) -> Option<[Vec3; 4]> {
         let tet = self.constraints.tetrahedra.get(id.0 as usize)?;
         Some([
             self.vertices[tet.indices[0]].position,
@@ -154,53 +154,6 @@ impl Tetrahedral {
         debug!("Verification successful");
 
         Ok(())
-    }
-
-    /// Draw wireframe of the mesh.
-    pub fn draw_wireframe(&self, d3: &mut RaylibMode3D<RaylibDrawHandle>, color: Color) {
-        // Draw explicit edges if available
-        for edge in &self.constraints.edges {
-            if let (Some(v1), Some(v2)) = (
-                self.vertices.get((edge.0.0 - 1) as usize),
-                self.vertices.get((edge.1.0 - 1) as usize),
-            ) {
-                let start = v1.position;
-                let end = v2.position;
-                d3.draw_line_3D(start, end, color);
-            }
-        }
-    }
-
-    /// Draw filled faces.
-    pub fn draw_faces(
-        &self,
-        d3: &mut RaylibMode3D<RaylibDrawHandle>,
-        state: &XpbdState,
-        color: Color,
-    ) {
-        for face in &self.faces {
-            let verts = [
-                self.vertices[(face.verts[0].0 - 1) as usize],
-                self.vertices[(face.verts[1].0 - 1) as usize],
-                self.vertices[(face.verts[2].0 - 1) as usize],
-            ];
-
-            // A triangle is "torn" if any of its corresponding edge constraints are inactive.
-            let torn = face
-                .edges
-                .iter()
-                .filter_map(|e| e.as_ref()) // Only check edges that have constraints
-                .any(|e| state.constraint_inactive(e.0 as usize)); // in this constraint set, edges are solved first, so base index is 0.
-
-            if !torn {
-                d3.draw_triangle3D(
-                    verts[0].position,
-                    verts[1].position,
-                    verts[2].position,
-                    color,
-                );
-            }
-        }
     }
 }
 

@@ -2,8 +2,9 @@
 
 use std::ops::{Index, IndexMut};
 
+use glam::Vec3;
+
 use crate::mesh::{Edge, Tetrahedron, Vertex, VertexId};
-use raylib::math::Vector3;
 
 /// The value and gradient of an n-ary constraint.
 #[derive(Debug)]
@@ -11,7 +12,7 @@ pub struct ValueGrad<const ARITY: usize> {
     /// Contraint value.
     pub value: f32,
     /// Constraint gradient with respect to each vertex.
-    pub grad: [Vector3; ARITY],
+    pub grad: [Vec3; ARITY],
     /// Indices of participating vertices.
     pub participants: [VertexId; ARITY],
 }
@@ -89,7 +90,7 @@ impl Constraint<2> for Edge {
             delta / distance
         } else {
             // Handle degenerate case where vertices are at the same position
-            Vector3::new(1.0, 0.0, 0.0)
+            Vec3::new(1.0, 0.0, 0.0)
         };
 
         ValueGrad {
@@ -147,7 +148,7 @@ impl Constraint<4> for Tetrahedron {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use raylib::math::Vector3;
+    use glam::Vec3;
     use std::collections::HashMap;
 
     /// Create a mock vertex storage for testing
@@ -162,7 +163,7 @@ mod tests {
             }
         }
 
-        fn insert(&mut self, id: VertexId, position: Vector3) {
+        fn insert(&mut self, id: VertexId, position: Vec3) {
             self.vertices.insert(
                 id,
                 Vertex {
@@ -183,7 +184,7 @@ mod tests {
 
     const EPSILON: f32 = 1e-6;
 
-    fn assert_vector3_eq(a: Vector3, b: Vector3, epsilon: f32) {
+    fn assert_vector3_eq(a: Vec3, b: Vec3, epsilon: f32) {
         assert!(
             (a.x - b.x).abs() < epsilon
                 && (a.y - b.y).abs() < epsilon
@@ -198,8 +199,8 @@ mod tests {
     #[test]
     fn test_edge_constraint_value_basic() {
         let mut vertices = MockVertices::new();
-        vertices.insert(VertexId(0), Vector3::new(0.0, 0.0, 0.0));
-        vertices.insert(VertexId(1), Vector3::new(3.0, 4.0, 0.0));
+        vertices.insert(VertexId(0), Vec3::new(0.0, 0.0, 0.0));
+        vertices.insert(VertexId(1), Vec3::new(3.0, 4.0, 0.0));
 
         let edge = Edge(VertexId(0), VertexId(1));
         let value = edge.value(&vertices);
@@ -211,8 +212,8 @@ mod tests {
     #[test]
     fn test_edge_constraint_value_zero_distance() {
         let mut vertices = MockVertices::new();
-        vertices.insert(VertexId(0), Vector3::new(1.0, 2.0, 3.0));
-        vertices.insert(VertexId(1), Vector3::new(1.0, 2.0, 3.0));
+        vertices.insert(VertexId(0), Vec3::new(1.0, 2.0, 3.0));
+        vertices.insert(VertexId(1), Vec3::new(1.0, 2.0, 3.0));
 
         let edge = Edge(VertexId(0), VertexId(1));
         let value = edge.value(&vertices);
@@ -223,8 +224,8 @@ mod tests {
     #[test]
     fn test_edge_constraint_value_unit_vectors() {
         let mut vertices = MockVertices::new();
-        vertices.insert(VertexId(0), Vector3::new(0.0, 0.0, 0.0));
-        vertices.insert(VertexId(1), Vector3::new(1.0, 0.0, 0.0));
+        vertices.insert(VertexId(0), Vec3::new(0.0, 0.0, 0.0));
+        vertices.insert(VertexId(1), Vec3::new(1.0, 0.0, 0.0));
 
         let edge = Edge(VertexId(0), VertexId(1));
         let value = edge.value(&vertices);
@@ -235,8 +236,8 @@ mod tests {
     #[test]
     fn test_edge_constraint_value_and_grad_basic() {
         let mut vertices = MockVertices::new();
-        vertices.insert(VertexId(0), Vector3::new(0.0, 0.0, 0.0));
-        vertices.insert(VertexId(1), Vector3::new(3.0, 4.0, 0.0));
+        vertices.insert(VertexId(0), Vec3::new(0.0, 0.0, 0.0));
+        vertices.insert(VertexId(1), Vec3::new(3.0, 4.0, 0.0));
 
         let edge = Edge(VertexId(0), VertexId(1));
         let result = edge.value_and_grad(&vertices);
@@ -251,7 +252,7 @@ mod tests {
         // Gradient should be normalized direction vector
         // delta = v1 - v2 = (0,0,0) - (3,4,0) = (-3,-4,0)
         // normalized delta = (-0.6, -0.8, 0.0)
-        let expected_grad = Vector3::new(-0.6, -0.8, 0.0);
+        let expected_grad = Vec3::new(-0.6, -0.8, 0.0);
         assert_vector3_eq(result.grad[0], expected_grad, EPSILON);
         assert_vector3_eq(result.grad[1], -expected_grad, EPSILON);
 
@@ -262,8 +263,8 @@ mod tests {
     #[test]
     fn test_edge_constraint_grad_degenerate_case() {
         let mut vertices = MockVertices::new();
-        vertices.insert(VertexId(0), Vector3::new(1.0, 2.0, 3.0));
-        vertices.insert(VertexId(1), Vector3::new(1.0, 2.0, 3.0));
+        vertices.insert(VertexId(0), Vec3::new(1.0, 2.0, 3.0));
+        vertices.insert(VertexId(1), Vec3::new(1.0, 2.0, 3.0));
 
         let edge = Edge(VertexId(0), VertexId(1));
         let result = edge.value_and_grad(&vertices);
@@ -276,15 +277,15 @@ mod tests {
         );
 
         // Gradient should be the fallback vector
-        assert_vector3_eq(result.grad[0], Vector3::new(1.0, 0.0, 0.0), EPSILON);
-        assert_vector3_eq(result.grad[1], Vector3::new(-1.0, 0.0, 0.0), EPSILON);
+        assert_vector3_eq(result.grad[0], Vec3::new(1.0, 0.0, 0.0), EPSILON);
+        assert_vector3_eq(result.grad[1], Vec3::new(-1.0, 0.0, 0.0), EPSILON);
     }
 
     #[test]
     fn test_edge_constraint_grad_symmetry() {
         let mut vertices = MockVertices::new();
-        vertices.insert(VertexId(0), Vector3::new(1.0, 2.0, 3.0));
-        vertices.insert(VertexId(1), Vector3::new(4.0, 6.0, 8.0));
+        vertices.insert(VertexId(0), Vec3::new(1.0, 2.0, 3.0));
+        vertices.insert(VertexId(1), Vec3::new(4.0, 6.0, 8.0));
 
         let edge = Edge(VertexId(0), VertexId(1));
         let result = edge.value_and_grad(&vertices);
@@ -296,8 +297,8 @@ mod tests {
     #[test]
     fn test_edge_constraint_grad_magnitude() {
         let mut vertices = MockVertices::new();
-        vertices.insert(VertexId(0), Vector3::new(0.0, 0.0, 0.0));
-        vertices.insert(VertexId(1), Vector3::new(5.0, 12.0, 0.0));
+        vertices.insert(VertexId(0), Vec3::new(0.0, 0.0, 0.0));
+        vertices.insert(VertexId(1), Vec3::new(5.0, 12.0, 0.0));
 
         let edge = Edge(VertexId(0), VertexId(1));
         let result = edge.value_and_grad(&vertices);
@@ -313,10 +314,10 @@ mod tests {
     #[test]
     fn test_tetrahedron_constraint_value_unit_cube() {
         let mut vertices = MockVertices::new();
-        vertices.insert(VertexId(0), Vector3::new(0.0, 0.0, 0.0));
-        vertices.insert(VertexId(1), Vector3::new(1.0, 0.0, 0.0));
-        vertices.insert(VertexId(2), Vector3::new(0.0, 1.0, 0.0));
-        vertices.insert(VertexId(3), Vector3::new(0.0, 0.0, 1.0));
+        vertices.insert(VertexId(0), Vec3::new(0.0, 0.0, 0.0));
+        vertices.insert(VertexId(1), Vec3::new(1.0, 0.0, 0.0));
+        vertices.insert(VertexId(2), Vec3::new(0.0, 1.0, 0.0));
+        vertices.insert(VertexId(3), Vec3::new(0.0, 0.0, 1.0));
 
         let tetrahedron = Tetrahedron {
             indices: [VertexId(0), VertexId(1), VertexId(2), VertexId(3)],
@@ -335,10 +336,10 @@ mod tests {
     fn test_tetrahedron_constraint_value_degenerate() {
         let mut vertices = MockVertices::new();
         // All points in the same plane (z=0)
-        vertices.insert(VertexId(0), Vector3::new(0.0, 0.0, 0.0));
-        vertices.insert(VertexId(1), Vector3::new(1.0, 0.0, 0.0));
-        vertices.insert(VertexId(2), Vector3::new(0.0, 1.0, 0.0));
-        vertices.insert(VertexId(3), Vector3::new(1.0, 1.0, 0.0));
+        vertices.insert(VertexId(0), Vec3::new(0.0, 0.0, 0.0));
+        vertices.insert(VertexId(1), Vec3::new(1.0, 0.0, 0.0));
+        vertices.insert(VertexId(2), Vec3::new(0.0, 1.0, 0.0));
+        vertices.insert(VertexId(3), Vec3::new(1.0, 1.0, 0.0));
 
         let tetrahedron = Tetrahedron {
             indices: [VertexId(0), VertexId(1), VertexId(2), VertexId(3)],
@@ -353,10 +354,10 @@ mod tests {
     fn test_tetrahedron_constraint_value_regular() {
         let mut vertices = MockVertices::new();
         let h = (2.0_f32 / 3.0).sqrt(); // Height of regular tetrahedron with edge length sqrt(2)
-        vertices.insert(VertexId(0), Vector3::new(0.0, 0.0, 0.0));
-        vertices.insert(VertexId(1), Vector3::new(1.0, 0.0, 0.0));
-        vertices.insert(VertexId(2), Vector3::new(0.5, (3.0_f32).sqrt() / 2.0, 0.0));
-        vertices.insert(VertexId(3), Vector3::new(0.5, (3.0_f32).sqrt() / 6.0, h));
+        vertices.insert(VertexId(0), Vec3::new(0.0, 0.0, 0.0));
+        vertices.insert(VertexId(1), Vec3::new(1.0, 0.0, 0.0));
+        vertices.insert(VertexId(2), Vec3::new(0.5, (3.0_f32).sqrt() / 2.0, 0.0));
+        vertices.insert(VertexId(3), Vec3::new(0.5, (3.0_f32).sqrt() / 6.0, h));
 
         let tetrahedron = Tetrahedron {
             indices: [VertexId(0), VertexId(1), VertexId(2), VertexId(3)],
@@ -370,10 +371,10 @@ mod tests {
     #[test]
     fn test_tetrahedron_constraint_value_and_grad_basic() {
         let mut vertices = MockVertices::new();
-        vertices.insert(VertexId(0), Vector3::new(0.0, 0.0, 0.0));
-        vertices.insert(VertexId(1), Vector3::new(1.0, 0.0, 0.0));
-        vertices.insert(VertexId(2), Vector3::new(0.0, 1.0, 0.0));
-        vertices.insert(VertexId(3), Vector3::new(0.0, 0.0, 1.0));
+        vertices.insert(VertexId(0), Vec3::new(0.0, 0.0, 0.0));
+        vertices.insert(VertexId(1), Vec3::new(1.0, 0.0, 0.0));
+        vertices.insert(VertexId(2), Vec3::new(0.0, 1.0, 0.0));
+        vertices.insert(VertexId(3), Vec3::new(0.0, 0.0, 1.0));
 
         let tetrahedron = Tetrahedron {
             indices: [VertexId(0), VertexId(1), VertexId(2), VertexId(3)],
@@ -397,23 +398,23 @@ mod tests {
 
         // Gradient sum should be zero (translation invariance)
         let grad_sum = result.grad[0] + result.grad[1] + result.grad[2] + result.grad[3];
-        assert_vector3_eq(grad_sum, Vector3::zero(), EPSILON);
+        assert_vector3_eq(grad_sum, Vec3::ZERO, EPSILON);
     }
 
     #[test]
     fn test_tetrahedron_constraint_grad_translation_invariance() {
         let mut vertices1 = MockVertices::new();
-        vertices1.insert(VertexId(0), Vector3::new(0.0, 0.0, 0.0));
-        vertices1.insert(VertexId(1), Vector3::new(1.0, 0.0, 0.0));
-        vertices1.insert(VertexId(2), Vector3::new(0.0, 1.0, 0.0));
-        vertices1.insert(VertexId(3), Vector3::new(0.0, 0.0, 1.0));
+        vertices1.insert(VertexId(0), Vec3::new(0.0, 0.0, 0.0));
+        vertices1.insert(VertexId(1), Vec3::new(1.0, 0.0, 0.0));
+        vertices1.insert(VertexId(2), Vec3::new(0.0, 1.0, 0.0));
+        vertices1.insert(VertexId(3), Vec3::new(0.0, 0.0, 1.0));
 
         let mut vertices2 = MockVertices::new();
-        let offset = Vector3::new(5.0, 3.0, -2.0);
-        vertices2.insert(VertexId(0), Vector3::new(0.0, 0.0, 0.0) + offset);
-        vertices2.insert(VertexId(1), Vector3::new(1.0, 0.0, 0.0) + offset);
-        vertices2.insert(VertexId(2), Vector3::new(0.0, 1.0, 0.0) + offset);
-        vertices2.insert(VertexId(3), Vector3::new(0.0, 0.0, 1.0) + offset);
+        let offset = Vec3::new(5.0, 3.0, -2.0);
+        vertices2.insert(VertexId(0), Vec3::new(0.0, 0.0, 0.0) + offset);
+        vertices2.insert(VertexId(1), Vec3::new(1.0, 0.0, 0.0) + offset);
+        vertices2.insert(VertexId(2), Vec3::new(0.0, 1.0, 0.0) + offset);
+        vertices2.insert(VertexId(3), Vec3::new(0.0, 0.0, 1.0) + offset);
 
         let tetrahedron = Tetrahedron {
             indices: [VertexId(0), VertexId(1), VertexId(2), VertexId(3)],
@@ -439,17 +440,17 @@ mod tests {
     #[test]
     fn test_tetrahedron_constraint_grad_rotation_covariance() {
         let mut vertices1 = MockVertices::new();
-        vertices1.insert(VertexId(0), Vector3::new(0.0, 0.0, 0.0));
-        vertices1.insert(VertexId(1), Vector3::new(1.0, 0.0, 0.0));
-        vertices1.insert(VertexId(2), Vector3::new(0.0, 1.0, 0.0));
-        vertices1.insert(VertexId(3), Vector3::new(0.0, 0.0, 1.0));
+        vertices1.insert(VertexId(0), Vec3::new(0.0, 0.0, 0.0));
+        vertices1.insert(VertexId(1), Vec3::new(1.0, 0.0, 0.0));
+        vertices1.insert(VertexId(2), Vec3::new(0.0, 1.0, 0.0));
+        vertices1.insert(VertexId(3), Vec3::new(0.0, 0.0, 1.0));
 
         // 90 degree rotation around z-axis
         let mut vertices2 = MockVertices::new();
-        vertices2.insert(VertexId(0), Vector3::new(0.0, 0.0, 0.0));
-        vertices2.insert(VertexId(1), Vector3::new(0.0, 1.0, 0.0));
-        vertices2.insert(VertexId(2), Vector3::new(-1.0, 0.0, 0.0));
-        vertices2.insert(VertexId(3), Vector3::new(0.0, 0.0, 1.0));
+        vertices2.insert(VertexId(0), Vec3::new(0.0, 0.0, 0.0));
+        vertices2.insert(VertexId(1), Vec3::new(0.0, 1.0, 0.0));
+        vertices2.insert(VertexId(2), Vec3::new(-1.0, 0.0, 0.0));
+        vertices2.insert(VertexId(3), Vec3::new(0.0, 0.0, 1.0));
 
         let tetrahedron = Tetrahedron {
             indices: [VertexId(0), VertexId(1), VertexId(2), VertexId(3)],
@@ -470,10 +471,10 @@ mod tests {
     #[test]
     fn test_tetrahedron_constraint_grad_finite_differences() {
         let mut vertices = MockVertices::new();
-        vertices.insert(VertexId(0), Vector3::new(0.0, 0.0, 0.0));
-        vertices.insert(VertexId(1), Vector3::new(1.0, 0.0, 0.0));
-        vertices.insert(VertexId(2), Vector3::new(0.0, 1.0, 0.0));
-        vertices.insert(VertexId(3), Vector3::new(0.0, 0.0, 1.0));
+        vertices.insert(VertexId(0), Vec3::new(0.0, 0.0, 0.0));
+        vertices.insert(VertexId(1), Vec3::new(1.0, 0.0, 0.0));
+        vertices.insert(VertexId(2), Vec3::new(0.0, 1.0, 0.0));
+        vertices.insert(VertexId(3), Vec3::new(0.0, 0.0, 1.0));
 
         let tetrahedron = Tetrahedron {
             indices: [VertexId(0), VertexId(1), VertexId(2), VertexId(3)],
@@ -511,8 +512,8 @@ mod tests {
     #[test]
     fn test_edge_constraint_grad_finite_differences() {
         let mut vertices = MockVertices::new();
-        vertices.insert(VertexId(0), Vector3::new(1.0, 2.0, 3.0));
-        vertices.insert(VertexId(1), Vector3::new(4.0, 5.0, 6.0));
+        vertices.insert(VertexId(0), Vec3::new(1.0, 2.0, 3.0));
+        vertices.insert(VertexId(1), Vec3::new(4.0, 5.0, 6.0));
 
         let edge = Edge(VertexId(0), VertexId(1));
         let result = edge.value_and_grad(&vertices);
@@ -548,10 +549,10 @@ mod tests {
     fn test_tetrahedron_constraint_negative_volume() {
         let mut vertices = MockVertices::new();
         // Inverted orientation to get negative volume
-        vertices.insert(VertexId(0), Vector3::new(0.0, 0.0, 0.0));
-        vertices.insert(VertexId(1), Vector3::new(0.0, 1.0, 0.0));
-        vertices.insert(VertexId(2), Vector3::new(1.0, 0.0, 0.0));
-        vertices.insert(VertexId(3), Vector3::new(0.0, 0.0, 1.0));
+        vertices.insert(VertexId(0), Vec3::new(0.0, 0.0, 0.0));
+        vertices.insert(VertexId(1), Vec3::new(0.0, 1.0, 0.0));
+        vertices.insert(VertexId(2), Vec3::new(1.0, 0.0, 0.0));
+        vertices.insert(VertexId(3), Vec3::new(0.0, 0.0, 1.0));
 
         let tetrahedron = Tetrahedron {
             indices: [VertexId(0), VertexId(1), VertexId(2), VertexId(3)],
@@ -568,6 +569,6 @@ mod tests {
 
         // Gradient sum should still be zero
         let grad_sum = result.grad[0] + result.grad[1] + result.grad[2] + result.grad[3];
-        assert_vector3_eq(grad_sum, Vector3::zero(), EPSILON);
+        assert_vector3_eq(grad_sum, Vec3::ZERO, EPSILON);
     }
 }

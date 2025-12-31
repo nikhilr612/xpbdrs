@@ -38,6 +38,7 @@ fn setup_camera(mesh: Option<&mesh::Tetrahedral>) -> (Vector3, Vector3) {
         |mesh| {
             let (min, max) = mesh.vertices.bounding_box();
             let center = (min + max) * 0.5;
+            let center = Vector3::new(center.x, center.y, center.z);
             let distance = (max - min).length().max(1.0) * 2.5;
             let camera_pos = center + Vector3::one() * distance * 0.7;
             (camera_pos, center)
@@ -113,7 +114,8 @@ fn load_mesh(mesh_path: Option<&str>) -> Option<mesh::Tetrahedral> {
 
     load_result
         .map(|mut m| {
-            m.vertices.translate(Vector3::new(0.0, SPAWN_HEIGHT, 0.0));
+            m.vertices
+                .translate(glam::Vec3::new(0.0, SPAWN_HEIGHT, 0.0));
             info!(
                 vertices = m.vertices.len(),
                 edges = m.constraints.edges.len(),

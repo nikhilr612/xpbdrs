@@ -1,6 +1,7 @@
 //! Spot in a box demo - spawns deci_spot mesh with gravity and box collisions,
 //! applying preset forces periodically at the centroid.
 
+use glam::Vec3;
 use raylib::prelude::*;
 use xpbdrs::{
     mesh::{self, Spatial},
@@ -20,25 +21,17 @@ const MAX_FORCE: f32 = 80.0; // Force cap
 const FORCE_DURATION: f32 = 0.5; // Duration to apply force
 
 // Preset force directions
-const FORCES: &[Vector3] = &[
-    Vector3::new(1.0, 0.5, 0.0),
-    Vector3::new(-1.0, 0.8, 0.0),
-    Vector3::new(0.0, 1.0, 1.0),
-    Vector3::new(0.0, 0.5, -1.0),
+const FORCES: &[glam::Vec3] = &[
+    glam::Vec3::new(1.0, 0.5, 0.0),
+    glam::Vec3::new(-1.0, 0.8, 0.0),
+    glam::Vec3::new(0.0, 1.0, 1.0),
+    glam::Vec3::new(0.0, 0.5, -1.0),
 ];
-
-fn calculate_centroid(mesh: &mesh::Tetrahedral) -> Vector3 {
-    let mut centroid = Vector3::zero();
-    for vertex in mesh.vertices.iter() {
-        centroid += vertex.position;
-    }
-    centroid / mesh.vertices.len() as f32
-}
 
 fn main() {
     let mut mesh = mesh::Tetrahedral::from_bincode("mesh/deci_spot.bin")
         .expect("Failed to load mesh/deci_spot.bin");
-    mesh.vertices.translate(Vector3::new(0.0, 2.0, 0.0));
+    mesh.vertices.translate(glam::Vec3::new(0.0, 2.0, 0.0));
 
     let original_mesh = mesh.clone();
     let mut time = 0.0;
@@ -87,11 +80,11 @@ fn main() {
             force_index = (force_index + 1) % FORCES.len();
         }
 
-        let centroid = calculate_centroid(&mesh);
+        let centroid = mesh.vertices.centroid();
         let current_force = if force_active {
-            FORCES[force_index].normalized()
+            FORCES[force_index].normalize()
         } else {
-            Vector3::zero()
+            Vec3::ZERO
         };
 
         // Box collision
@@ -103,7 +96,7 @@ fn main() {
 
         // Physics with inverse square law
         let acceleration_field = |vertex: &mesh::Vertex| {
-            let mut acceleration = Vector3::new(0.0, -9.81, 0.0); // Gravity
+            let mut acceleration = Vec3::new(0.0, -9.81, 0.0); // Gravity
             if force_active {
                 let distance = (vertex.position - centroid).length();
                 if distance >= FORCE_THRESHOLD {
@@ -148,7 +141,11 @@ fn main() {
 
             // Centroid when force is active
             if force_active {
-                d3.draw_sphere(centroid, 0.08, Color::RED);
+                d3.draw_sphere(
+                    raylib::math::Vector3::new(centroid.x, centroid.y, centroid.z),
+                    0.08,
+                    Color::RED,
+                );
             }
         }
     }

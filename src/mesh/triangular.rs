@@ -3,25 +3,24 @@
 use std::collections::HashMap;
 use std::io::Write;
 
-use raylib::prelude::*;
 use tracing::{debug, info, warn};
 
 use super::common::Result;
 use crate::{
     constraint::Constraint,
     mesh::{Edge, EdgeId, Triangle, Vertex, VertexId},
-    xpbd::{ConstraintSet, XpbdState},
+    xpbd::ConstraintSet,
 };
 
 /// Struct to contain edge constraint data for a triangulated mesh.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct TriConstraints {
     /// Length constraints for every edge in the mesh.
-    edges: Vec<Edge>,
+    pub edges: Vec<Edge>,
     /// Length constraints between opposite points of adjacent triangles.
     /// This is also an edge, since it a distance constraint between two vertices.
     /// This is a "weak" variant of the more common angle-based bending constraint.
-    weak_bending: Vec<Edge>,
+    pub weak_bending: Vec<Edge>,
 }
 
 /// Values computed for the constraints of a triangulated mesh.
@@ -232,92 +231,31 @@ impl TriangulatedSurface {
 
         Ok(())
     }
-
-    /// Draw wireframe of the mesh.
-    pub fn draw_wireframe(&self, d3: &mut RaylibMode3D<RaylibDrawHandle>, color: Color) {
-        // Draw explicit edges if available
-        for edge in &self.constraints.edges {
-            if let (Some(v1), Some(v2)) = (
-                self.vertices.get((edge.0.0 - 1) as usize),
-                self.vertices.get((edge.1.0 - 1) as usize),
-            ) {
-                let start = v1.position;
-                let end = v2.position;
-                d3.draw_line_3D(start, end, color);
-            }
-        }
-    }
-
-    /// Draw weak bending constraints.
-    pub fn draw_weak_bending(&self, d3: &mut RaylibMode3D<RaylibDrawHandle>, color: Color) {
-        for edge in &self.constraints.weak_bending {
-            if let (Some(v1), Some(v2)) = (
-                self.vertices.get((edge.0.0 - 1) as usize),
-                self.vertices.get((edge.1.0 - 1) as usize),
-            ) {
-                let start = v1.position;
-                let end = v2.position;
-                d3.draw_line_3D(start, end, color);
-            }
-        }
-    }
-
-    /// Draw filled faces.
-    /// # Panics
-    /// Panics if any face does not have corresponding edges.
-    pub fn draw_faces(
-        &self,
-        d3: &mut RaylibMode3D<RaylibDrawHandle>,
-        state: &XpbdState,
-        color: Color,
-    ) {
-        for face in &self.faces {
-            let verts = [
-                self.vertices[(face.verts[0].0 - 1) as usize],
-                self.vertices[(face.verts[1].0 - 1) as usize],
-                self.vertices[(face.verts[2].0 - 1) as usize],
-            ];
-
-            // A triangle is "torn" if any of its corresponding edge constraints are inactive.
-            let torn = face.edges.iter().any(|e| {
-                state.constraint_inactive(
-                    e.expect("All triangles should have corresponding edges").0 as usize,
-                )
-            }); // edges are solved first, so base index is 0.
-
-            if !torn {
-                d3.draw_triangle3D(
-                    verts[0].position,
-                    verts[1].position,
-                    verts[2].position,
-                    color,
-                );
-            }
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
+    use glam::Vec3;
+
     use super::*;
 
     #[test]
     fn test_triangulated_surface_creation() {
         let vertices = vec![
             Vertex {
-                position: Vector3::new(0.0, 0.0, 0.0),
+                position: Vec3::new(0.0, 0.0, 0.0),
                 inv_mass: 1.0,
             },
             Vertex {
-                position: Vector3::new(1.0, 0.0, 0.0),
+                position: Vec3::new(1.0, 0.0, 0.0),
                 inv_mass: 1.0,
             },
             Vertex {
-                position: Vector3::new(0.5, 1.0, 0.0),
+                position: Vec3::new(0.5, 1.0, 0.0),
                 inv_mass: 1.0,
             },
             Vertex {
-                position: Vector3::new(0.5, 0.5, 1.0),
+                position: Vec3::new(0.5, 0.5, 1.0),
                 inv_mass: 1.0,
             },
         ];

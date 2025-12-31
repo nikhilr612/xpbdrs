@@ -65,7 +65,7 @@ impl TetgenParser {
                 .map(|&t| t.parse().map_err(Into::into))
                 .collect::<Result<_>>()?;
             Ok(Vertex {
-                position: raylib::prelude::Vector3::new(coords[0], coords[1], coords[2]),
+                position: glam::Vec3::new(coords[0], coords[1], coords[2]),
                 inv_mass: 1.0,
             })
         })

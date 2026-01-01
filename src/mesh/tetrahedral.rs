@@ -18,11 +18,9 @@ use crate::xpbd::{ConstraintSet, XpbdState};
 pub struct MeshTearState {
     /// Boolean vector indicating torn faces by index.
     torn_faces: BitVec,
-    /// Map from edge (as sorted vertex pair) to list of face indices containing that edge.
-    edge_to_faces: HashMap<(u32, u32), Vec<usize>>,
-    /// Map from constraint edge index to list of face indices referencing that edge.
-    edge_idx_to_faces: HashMap<usize, Vec<usize>>,
-    /// Map from vertex ID to list of edge indices incident to that vertex.
+    /// Map from constraint edge index to list of face indices that reference it.
+    edge_to_faces: HashMap<usize, Vec<usize>>,
+    /// Map from vertex ID to list of constraint edge indices incident to that vertex.
     vertex_to_edges: HashMap<u32, Vec<usize>>,
 }
 
@@ -34,7 +32,6 @@ impl MeshTearState {
         Self {
             torn_faces: BitVec::repeat(false, n_faces),
             edge_to_faces: HashMap::new(),
-            edge_idx_to_faces: HashMap::new(),
             vertex_to_edges: HashMap::new(),
         }
     }
@@ -44,24 +41,11 @@ impl MeshTearState {
     pub fn with_adjacency(faces: &[Triangle], edges: &[Edge]) -> Self {
         let n_faces = faces.len();
         
-        // Build edge→face adjacency map (by vertex pairs)
-        let mut edge_to_faces: HashMap<(u32, u32), Vec<usize>> = HashMap::new();
-        for (face_idx, face) in faces.iter().enumerate() {
-            // For each pair of vertices in the face, add the face to the edge map
-            let verts: Vec<u32> = face.verts.iter().map(|v| v.0).collect();
-            for i in 0..3 {
-                let v0 = verts[i];
-                let v1 = verts[(i + 1) % 3];
-                let key = if v0 < v1 { (v0, v1) } else { (v1, v0) };
-                edge_to_faces.entry(key).or_default().push(face_idx);
-            }
-        }
-        
-        // Build edge_idx→face adjacency map (by constraint edge index from face.edges)
-        let mut edge_idx_to_faces: HashMap<usize, Vec<usize>> = HashMap::new();
+        // Build edge→face adjacency map from face.edges (authoritative source)
+        let mut edge_to_faces: HashMap<usize, Vec<usize>> = HashMap::new();
         for (face_idx, face) in faces.iter().enumerate() {
             for edge_id in face.edges.iter().filter_map(|e| e.as_ref()) {
-                edge_idx_to_faces.entry(edge_id.0 as usize).or_default().push(face_idx);
+                edge_to_faces.entry(edge_id.0 as usize).or_default().push(face_idx);
             }
         }
         
@@ -75,7 +59,6 @@ impl MeshTearState {
         Self {
             torn_faces: BitVec::repeat(false, n_faces),
             edge_to_faces,
-            edge_idx_to_faces,
             vertex_to_edges,
         }
     }
@@ -101,29 +84,16 @@ impl MeshTearState {
         self.torn_faces.fill(false);
     }
     
-    /// Get faces containing the given edge (by sorted vertex pair).
+    /// Get faces that reference the given constraint edge index.
     #[must_use]
-    pub fn faces_for_edge(&self, v0: u32, v1: u32) -> &[usize] {
-        let key = if v0 < v1 { (v0, v1) } else { (v1, v0) };
-        self.edge_to_faces.get(&key).map_or(&[], |v| v.as_slice())
+    pub fn faces_for_edge(&self, edge_idx: usize) -> &[usize] {
+        self.edge_to_faces.get(&edge_idx).map_or(&[], |v| v.as_slice())
     }
     
-    /// Get faces referencing the given constraint edge index.
-    #[must_use]
-    pub fn faces_for_edge_idx(&self, edge_idx: usize) -> &[usize] {
-        self.edge_idx_to_faces.get(&edge_idx).map_or(&[], |v| v.as_slice())
-    }
-    
-    /// Get edges incident to the given vertex.
+    /// Get constraint edge indices incident to the given vertex.
     #[must_use]
     pub fn edges_for_vertex(&self, vertex_id: u32) -> &[usize] {
         self.vertex_to_edges.get(&vertex_id).map_or(&[], |v| v.as_slice())
-    }
-    
-    /// Check if adjacency data has been computed.
-    #[must_use]
-    pub fn has_adjacency(&self) -> bool {
-        !self.edge_to_faces.is_empty()
     }
 }
 
@@ -310,7 +280,7 @@ impl Tetrahedral {
         mesh
     }
 
-    /// Draw wireframe of the mesh. Only draws edges that are active and belong to at least one non-torn face.
+    /// Draw wireframe of the mesh. Only draws edges that are active and referenced by at least one non-torn face.
     pub fn draw_wireframe(&self, d3: &mut RaylibMode3D<RaylibDrawHandle>, xpbd_state: &XpbdState, tear_state: &MeshTearState, color: Color) {
         for (edge_idx, edge) in self.constraints.edges.iter().enumerate() {
             // Skip inactive (removed) edges
@@ -318,28 +288,10 @@ impl Tetrahedral {
                 continue;
             }
             
-            let v0 = edge.0.0;
-            let v1 = edge.1.0;
-            
-            // First check: does this edge belong to ANY face at all?
-            let belongs_to_any_face = self.faces.iter().any(|face| {
-                let fv: Vec<u32> = face.verts.iter().map(|v| v.0).collect();
-                fv.contains(&v0) && fv.contains(&v1)
-            });
-            
-            // Skip internal edges that aren't part of surface faces
-            if !belongs_to_any_face {
-                continue;
-            }
-            
-            // Second check: does it belong to a non-torn face?
-            let has_active_face = self.faces.iter().enumerate().any(|(face_idx, face)| {
-                if tear_state.face_torn(face_idx) {
-                    return false;
-                }
-                let fv: Vec<u32> = face.verts.iter().map(|v| v.0).collect();
-                fv.contains(&v0) && fv.contains(&v1)
-            });
+            // Check if this edge is referenced by any non-torn face
+            let has_active_face = tear_state.faces_for_edge(edge_idx)
+                .iter()
+                .any(|&face_idx| !tear_state.face_torn(face_idx));
             
             if !has_active_face {
                 continue;
@@ -446,174 +398,37 @@ impl Tetrahedral {
             }
         }
         
-        // Steps 2-3: Cascade face and edge removals until stable
-        // Use adjacency map if available for O(1) lookups
-        let use_adjacency = tear_state.has_adjacency();
-        
-        loop {
-            let mut changed = false;
-            
-            // Remove faces that have any inactive edge
-            // ALWAYS check explicit face.edges references (most reliable)
-            for (face_idx, face) in self.faces.iter().enumerate() {
-                if tear_state.face_torn(face_idx) {
-                    continue;
-                }
-                
-                // Check explicit edge references stored in face.edges
-                let has_inactive_edge = face.edges.iter()
-                    .filter_map(|e| e.as_ref())
-                    .any(|edge_id| xpbd_state.constraint_inactive(edge_id.0 as usize));
-                
-                if has_inactive_edge {
-                    tear_state.tear_face(face_idx);
-                    changed = true;
-                }
+        // Step 2: Tear all faces that have any inactive edge
+        // This is a one-way cascade: edge deactivation → face tearing
+        // We don't deactivate edges just because their faces are torn
+        for (face_idx, face) in self.faces.iter().enumerate() {
+            if tear_state.face_torn(face_idx) {
+                continue;
             }
             
-            // Also use adjacency maps to catch any edges
-            if use_adjacency {
-                for (edge_idx, edge) in self.constraints.edges.iter().enumerate() {
-                    if !xpbd_state.constraint_inactive(edge_idx) {
-                        continue;
-                    }
-                    
-                    // Use edge_idx_to_faces (most reliable - based on face.edges references)
-                    let faces_by_idx: Vec<usize> = tear_state
-                        .faces_for_edge_idx(edge_idx)
-                        .iter()
-                        .copied()
-                        .collect();
-                    
-                    for face_idx in faces_by_idx {
-                        if !tear_state.face_torn(face_idx) {
-                            tear_state.tear_face(face_idx);
-                            changed = true;
-                        }
-                    }
-                    
-                    // Also use vertex-pair lookup as backup
-                    let faces_by_verts: Vec<usize> = tear_state
-                        .faces_for_edge(edge.0.0, edge.1.0)
-                        .iter()
-                        .copied()
-                        .collect();
-                    
-                    for face_idx in faces_by_verts {
-                        if !tear_state.face_torn(face_idx) {
-                            tear_state.tear_face(face_idx);
-                            changed = true;
-                        }
-                    }
-                }
-            } else {
-                // Fallback path: check all faces
-                for (face_idx, face) in self.faces.iter().enumerate() {
-                    if tear_state.face_torn(face_idx) {
-                        continue;
-                    }
-                    
-                    // Check explicit edge references
-                    let has_inactive_edge_by_id = face.edges.iter()
-                        .filter_map(|e| e.as_ref())
-                        .any(|e| xpbd_state.constraint_inactive(e.0 as usize));
-                    
-                    // Also check by vertex pairs
-                    let face_verts: Vec<u32> = face.verts.iter().map(|v| v.0).collect();
-                    let has_inactive_edge_by_verts = self.constraints.edges.iter().enumerate().any(|(edge_idx, edge)| {
-                        if !xpbd_state.constraint_inactive(edge_idx) {
-                            return false;
-                        }
-                        face_verts.contains(&edge.0.0) && face_verts.contains(&edge.1.0)
-                    });
-                    
-                    if has_inactive_edge_by_id || has_inactive_edge_by_verts {
-                        tear_state.tear_face(face_idx);
-                        changed = true;
-                    }
-                }
-            }
+            let has_inactive_edge = face.edges.iter()
+                .filter_map(|e| e.as_ref())
+                .any(|edge_id| xpbd_state.constraint_inactive(edge_id.0 as usize));
             
-            // Remove edges that don't belong to any active face
-            if use_adjacency {
-                // Optimized path: use adjacency map
-                for (edge_idx, edge) in self.constraints.edges.iter().enumerate() {
-                    if xpbd_state.constraint_inactive(edge_idx) {
-                        continue;
-                    }
-                    
-                    // Check if any face containing this edge is still active
-                    let has_active_face = tear_state.faces_for_edge(edge.0.0, edge.1.0)
-                        .iter()
-                        .any(|&face_idx| !tear_state.face_torn(face_idx));
-                    
-                    if !has_active_face {
-                        xpbd_state.deactivate_constraint(edge_idx);
-                        changed = true;
-                    }
-                }
-            } else {
-                // Fallback path: linear search
-                for (edge_idx, edge) in self.constraints.edges.iter().enumerate() {
-                    if xpbd_state.constraint_inactive(edge_idx) {
-                        continue;
-                    }
-                    
-                    let v0 = edge.0.0;
-                    let v1 = edge.1.0;
-                    
-                    let belongs_to_active_face = self.faces.iter().enumerate().any(|(face_idx, face)| {
-                        if tear_state.face_torn(face_idx) {
-                            return false;
-                        }
-                        let fv: Vec<u32> = face.verts.iter().map(|v| v.0).collect();
-                        fv.contains(&v0) && fv.contains(&v1)
-                    });
-                    
-                    if !belongs_to_active_face {
-                        xpbd_state.deactivate_constraint(edge_idx);
-                        changed = true;
-                    }
-                }
-            }
-            
-            if !changed {
-                break;
+            if has_inactive_edge {
+                tear_state.tear_face(face_idx);
             }
         }
         
-        // Step 5: Freeze vertices with no active edges
-        if use_adjacency {
-            // Optimized: use vertex→edge adjacency
-            for (vert_idx, _) in self.vertices.iter().enumerate() {
-                let vert_id = (vert_idx + 1) as u32;
-                
-                let has_active_edge = tear_state.edges_for_vertex(vert_id)
-                    .iter()
-                    .any(|&edge_idx| !xpbd_state.constraint_inactive(edge_idx));
-                
-                if !has_active_edge {
-                    xpbd_state.dampen_vertex_velocity(vert_idx, 0.0);
-                }
-            }
-        } else {
-            // Fallback: linear search
-            for (vert_idx, _) in self.vertices.iter().enumerate() {
-                let vert_id = (vert_idx + 1) as u32;
-                
-                let has_active_edge = self.constraints.edges.iter().enumerate().any(|(edge_idx, edge)| {
-                    !xpbd_state.constraint_inactive(edge_idx) && (edge.0.0 == vert_id || edge.1.0 == vert_id)
-                });
-                
-                if !has_active_edge {
-                    xpbd_state.dampen_vertex_velocity(vert_idx, 0.0);
-                }
+        // Step 3: Freeze vertices with no active edges
+        for (vert_idx, _) in self.vertices.iter().enumerate() {
+            let vert_id = (vert_idx + 1) as u32;
+            
+            let has_active_edge = tear_state.edges_for_vertex(vert_id)
+                .iter()
+                .any(|&edge_idx| !xpbd_state.constraint_inactive(edge_idx));
+            
+            if !has_active_edge {
+                xpbd_state.dampen_vertex_velocity(vert_idx, 0.0);
             }
         }
         
-        // Step 6: Detect disconnected fragments via flood fill from anchored vertices
-        // A vertex is "anchored" if it's at or below ground level (y <= 0.01)
-        // Find all faces reachable from anchored vertices through active edges
+        // Step 4: Detect disconnected fragments via flood fill from anchored vertices
         self.tear_disconnected_fragments(xpbd_state, tear_state);
     }
     
@@ -711,59 +526,6 @@ impl Tetrahedral {
             
             if !both_connected {
                 xpbd_state.deactivate_constraint(edge_idx);
-            }
-        }
-    }
-    
-    /// Compute edge deformations and tear faces that have edges exceeding the threshold.
-    /// (Visual-only tearing - keeps constraints active)
-    ///
-    /// This function checks each face's edges and if any edge's current length exceeds
-    /// the original length by the deformation threshold, the face is marked as torn.
-    #[allow(dead_code)]
-    pub fn tear_faces_only(&self, xpbd_state: &XpbdState, tear_state: &mut MeshTearState, initial_values: &TetConstraintValues, deformation_threshold: f32) {
-        for (face_idx, face) in self.faces.iter().enumerate() {
-            if !tear_state.face_torn(face_idx) {
-                // Check each edge of this face
-                for edge_id in face.edges.iter().filter_map(|e| e.as_ref()) {
-                    // Skip if constraint is inactive
-                    if xpbd_state.constraint_inactive(edge_id.0 as usize) {
-                        tear_state.tear_face(face_idx);
-                        break;
-                    }
-                    
-                    let Some(edge) = self.constraints.edges.get(edge_id.0 as usize) else {
-                        continue;
-                    };
-                    
-                    // Bounds-safe vertex access
-                    let v0_idx = (edge.0.0 as usize).saturating_sub(1);
-                    let v1_idx = (edge.1.0 as usize).saturating_sub(1);
-                    
-                    let (Some(v0), Some(v1)) = (self.vertices.get(v0_idx), self.vertices.get(v1_idx)) else {
-                        continue;
-                    };
-                    
-                    // Get current edge length
-                    let current_length = (v1.position - v0.position).length();
-
-                    // Get original edge length (with bounds check)
-                    let Some(&original_length) = initial_values.lengths.get(edge_id.0 as usize) else {
-                        continue;
-                    };
-
-                    // Guard against division by zero
-                    if original_length < 1e-8 {
-                        continue;
-                    }
-                    
-                    // Check if edge has been deformed beyond threshold
-                    let deformation = (current_length - original_length).max(0.0);
-                    if deformation > deformation_threshold * original_length {
-                        tear_state.tear_face(face_idx);
-                        break; // Face is torn, no need to check other edges
-                    }
-                }
             }
         }
     }
@@ -987,11 +749,9 @@ mod tests {
         let (mesh, _) = create_tear_test_mesh();
         let tear_state = MeshTearState::with_adjacency(&mesh.faces, &mesh.constraints.edges);
         
-        assert!(tear_state.has_adjacency());
-        
         // Edge 0 connects vertices 1 and 2, should be in faces 0 and 1
-        let faces = tear_state.faces_for_edge(1, 2);
-        assert_eq!(faces.len(), 2, "Edge 1-2 should be in 2 faces");
+        let faces = tear_state.faces_for_edge(0);
+        assert_eq!(faces.len(), 2, "Edge 0 should be referenced by 2 faces");
         
         // Vertex 1 should have 3 incident edges (0, 2, 3)
         let edges = tear_state.edges_for_vertex(1);

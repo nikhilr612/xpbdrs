@@ -3,7 +3,7 @@
 use std::ops::IndexMut;
 
 use bitvec::vec::BitVec;
-use rand::seq::SliceRandom;
+use rand::{rngs::SmallRng, seq::SliceRandom, SeedableRng};
 use raylib::math::Vector3;
 
 use crate::{
@@ -12,15 +12,18 @@ use crate::{
 };
 
 /// State for Extended Position Based Dynamics simulation.
+#[derive(Clone)]
 pub struct XpbdState {
     /// Velocities of each particle.
     velocities: Vec<Vector3>,
     /// Boolean vector indicating inactive constraints by index.
     inactive_constraints: BitVec,
-    /// Boolean vector indicating torn faces by index.
-    torn_faces: BitVec,
     /// Vector to store old positions during substeps.
     position_buffer: Vec<Vector3>,
+    /// External forces accumulated per vertex (cleared each step).
+    external_forces: Vec<Vector3>,
+    /// Reusable RNG for constraint shuffling (SmallRng for performance).
+    rng: SmallRng,
 }
 
 impl XpbdState {
@@ -36,37 +39,27 @@ impl XpbdState {
             .is_some_and(|b| *b)
     }
 
-    #[must_use]
-    /// Check if a face at given index is torn.
-    pub fn face_torn(&self, index: usize) -> bool {
-        self.torn_faces
-            .as_bitslice()
-            .get(index)
-            .is_some_and(|b| *b)
-    }
-
-    /// Mark a face as torn.
-    pub fn tear_face(&mut self, index: usize) {
-        if index < self.torn_faces.len() {
-            self.torn_faces.set(index, true);
+    /// Add an external force to a specific vertex for the current step.
+    /// Forces are accumulated and applied during the next substep, then cleared.
+    /// This is the preferred way to apply interaction forces through the solver.
+    pub fn add_external_force(&mut self, vertex_idx: usize, force: Vector3) {
+        if vertex_idx < self.external_forces.len() {
+            self.external_forces[vertex_idx] += force;
         }
     }
 
-    /// Apply forces to vertices based on an interaction effect.
-    /// Modifies velocities directly to apply the force.
-    /// Clamps velocity magnitude to prevent instability.
-    pub fn apply_interaction_force(&mut self, effect: &crate::interaction::InteractionEffect) {
-        const MAX_VELOCITY: f32 = 10.0; // Maximum velocity magnitude
-        
+    /// Apply forces from an interaction effect through the solver's force interface.
+    /// Forces are accumulated for the next substep.
+    pub fn apply_interaction_effect(&mut self, effect: &crate::interaction::InteractionEffect) {
         for (vertex_idx, force) in effect.affected_vertices.iter().zip(effect.forces.iter()) {
-            self.velocities[*vertex_idx] += *force;
-            
-            // Clamp velocity magnitude
-            let vel = &mut self.velocities[*vertex_idx];
-            let speed = vel.length();
-            if speed > MAX_VELOCITY {
-                *vel = *vel * (MAX_VELOCITY / speed);
-            }
+            self.add_external_force(*vertex_idx, *force);
+        }
+    }
+
+    /// Clear accumulated external forces (called after each step).
+    fn clear_external_forces(&mut self) {
+        for f in &mut self.external_forces {
+            *f = Vector3::zero();
         }
     }
 
@@ -77,7 +70,7 @@ impl XpbdState {
         }
     }
 
-    /// Dampen velocity of a specific vertex (used when edges break).
+    /// Dampen velocity of a specific vertex.
     pub fn dampen_vertex_velocity(&mut self, vertex_idx: usize, factor: f32) {
         if vertex_idx < self.velocities.len() {
             self.velocities[vertex_idx] *= factor;
@@ -94,7 +87,7 @@ impl XpbdState {
         }
     }
 
-    /// Get the velocities vector (for computing edge deformations).
+    /// Get the velocities vector.
     pub fn velocities(&self) -> &[Vector3] {
         &self.velocities
     }
@@ -102,6 +95,11 @@ impl XpbdState {
     /// Get mutable access to velocities.
     pub fn velocities_mut(&mut self) -> &mut [Vector3] {
         &mut self.velocities
+    }
+    
+    /// Get the external forces vector (read-only).
+    pub fn external_forces(&self) -> &[Vector3] {
+        &self.external_forces
     }
 }
 
@@ -120,17 +118,17 @@ pub struct XpbdParams {
     pub n_substeps: usize,
     /// Time step for each simulation substep.
     pub time_substep: f32,
-    /// Length constraint force-threshold for deactivation.
+    /// Length constraint Lagrange multiplier threshold for deactivation.
+    /// Constraint deactivates when |lambda| * dt^2 > threshold.
     pub l_threshold_length: f32,
-    /// Volume constraint force-threshold for deactivation.
+    /// Volume constraint Lagrange multiplier threshold for deactivation.
+    /// Constraint deactivates when |lambda| * dt^2 > threshold.
     pub l_threshold_volume: f32,
     /// Size of the shuffle buffer for constraint processing.
     /// Constraints are collected into chunks of this size and shuffled before processing.
     /// Use `usize::MAX` to shuffle all constraints together (full shuffle).
     /// Use `1` to disable shuffling entirely.
     pub shuffle_buffer_size: usize,
-    /// Constant acceleration field applied to all vertices (e.g., gravity).
-    pub constant_field: Vector3,
     /// Scalar factor applied to all reference volumes.
     /// When set > 1.0, this indicates that the mesh should inflate, and when set < 1.0, the mesh should deflate.
     pub p_volume: f32,
@@ -147,21 +145,21 @@ impl Default for XpbdParams {
             l_threshold_length: f32::INFINITY,
             l_threshold_volume: f32::INFINITY,
             shuffle_buffer_size: usize::MAX, // Full shuffle by default
-            constant_field: Vector3::new(0.0, -9.81, 0.0), // Default gravity
             p_volume: 1.0,
         }
     }
 }
 
 impl XpbdState {
-    /// Initialize the XPBD state with given number of vertices, substeps, and time step.
+    /// Initialize the XPBD state with given number of vertices and constraints.
     #[must_use]
-    pub fn new(n_vertices: usize, n_constraints: usize, n_faces: usize) -> Self {
+    pub fn new(n_vertices: usize, n_constraints: usize) -> Self {
         Self {
             velocities: vec![Vector3::zero(); n_vertices],
             position_buffer: vec![Vector3::zero(); n_vertices],
             inactive_constraints: BitVec::repeat(false, n_constraints),
-            torn_faces: BitVec::repeat(false, n_faces),
+            external_forces: vec![Vector3::zero(); n_vertices],
+            rng: SmallRng::from_seed([0u8; 32]),
         }
     }
 }
@@ -171,6 +169,7 @@ pub struct ConstraintProcessor<'solver, V: IndexMut<VertexId, Output = Vertex>> 
     inactive_constraints: &'solver mut BitVec,
     vertices: &'solver mut V,
     constraint_index: usize,
+    rng: &'solver mut SmallRng,
 }
 
 impl<V: IndexMut<VertexId, Output = Vertex>> ConstraintProcessor<'_, V> {
@@ -178,14 +177,18 @@ impl<V: IndexMut<VertexId, Output = Vertex>> ConstraintProcessor<'_, V> {
     /// Internally, the index of each constraint in the iterator is used to track constraint active status.
     /// Thus, it is imperative that `process` is called each time with constraints in the same order.
     ///
+    /// The threshold check uses |lambda| * dt^2 > l_threshold, where lambda is the Lagrange multiplier.
+    ///
     /// Constraints are shuffled on-the-fly in chunks of `buffer_size` for better convergence
     /// (avoids systematic bias from fixed iteration order).
+    /// When `buffer_size` ≤ 1, shuffling is skipped entirely for performance.
     #[must_use]
     pub fn process<'a, I, C, const N: usize>(
         mut self,
         iter: I,
         l_threshold: f32,
         alpha: f32,
+        dt_squared: f32,
         buffer_size: usize,
     ) -> Self
     where
@@ -193,22 +196,39 @@ impl<V: IndexMut<VertexId, Output = Vertex>> ConstraintProcessor<'_, V> {
         C: Constraint<N> + 'a,
     {
         let base_index = self.constraint_index;
-        let mut rng = rand::thread_rng();
         let mut total_count = 0;
 
-        // Process constraints in shuffled chunks
-        let mut peekable = iter.enumerate().peekable();
-        while peekable.peek().is_some() {
-            let mut buffer: Vec<(usize, (&C, f32))> = peekable.by_ref().take(buffer_size).collect();
-            total_count += buffer.len();
-            buffer.shuffle(&mut rng);
-
-            for (i, (constraint, ref_value)) in buffer {
+        // Skip shuffling entirely when buffer_size ≤ 1
+        if buffer_size <= 1 {
+            for (i, (constraint, ref_value)) in iter.enumerate() {
+                total_count += 1;
                 let current_index = base_index + i;
                 if !self.inactive_constraints[current_index] {
                     let result = constraint.value_and_grad(self.vertices);
-                    if apply_constraint(result, ref_value, alpha, self.vertices) > l_threshold {
+                    let lambda = apply_constraint(result, ref_value, alpha, self.vertices);
+                    // Threshold check: |lambda| * dt^2 > threshold
+                    if lambda.abs() * dt_squared > l_threshold {
                         self.inactive_constraints.set(current_index, true);
+                    }
+                }
+            }
+        } else {
+            // Process constraints in shuffled chunks using reusable RNG
+            let mut peekable = iter.enumerate().peekable();
+            while peekable.peek().is_some() {
+                let mut buffer: Vec<(usize, (&C, f32))> = peekable.by_ref().take(buffer_size).collect();
+                total_count += buffer.len();
+                buffer.shuffle(self.rng);
+
+                for (i, (constraint, ref_value)) in buffer {
+                    let current_index = base_index + i;
+                    if !self.inactive_constraints[current_index] {
+                        let result = constraint.value_and_grad(self.vertices);
+                        let lambda = apply_constraint(result, ref_value, alpha, self.vertices);
+                        // Threshold check: |lambda| * dt^2 > threshold
+                        if lambda.abs() * dt_squared > l_threshold {
+                            self.inactive_constraints.set(current_index, true);
+                        }
                     }
                 }
             }
@@ -220,19 +240,21 @@ impl<V: IndexMut<VertexId, Output = Vertex>> ConstraintProcessor<'_, V> {
 }
 
 /// Basic XPBD step function for tetrahedral meshes.
-/// Additionally accepts a vertex correction function to handle collisions and other vertex corrections that need to be applied after the kinematic update.
-pub fn step_basic<F>(
+/// The `acceleration_field` closure provides per-vertex acceleration (e.g., gravity).
+/// The `vertex_correction` closure handles collisions and other vertex corrections after kinematic update.
+/// External forces accumulated via `state.add_external_force()` are applied during this step and then cleared.
+pub fn step_basic<F, A>(
     params: &XpbdParams,
     mut state: XpbdState,
     mesh: &mut Tetrahedral,
     initial_value: &TetConstraintValues,
     mut vertex_correction: F,
+    acceleration_field: A,
 ) -> XpbdState
 where
     F: FnMut(&mut Vertex),
+    A: Fn(&Vertex) -> Vector3,
 {
-    let constant_field = params.constant_field;
-    let acceleration_field = move |_: &Vertex| constant_field;
     for _ in 0..params.n_substeps {
         substep(
             params,
@@ -244,6 +266,8 @@ where
             &acceleration_field,
         );
     }
+    // Clear external forces after the step completes
+    state.clear_external_forces();
     state
 }
 
@@ -259,6 +283,7 @@ pub trait ConstraintSet<V: IndexMut<VertexId, Output = Vertex>, I> {
 /// This includes kinematic updates, constraint solving, and velocity updates.
 /// The `acceleration_field` closure allows for flexible force application (e.g., gravity, wind, etc.) on each vertex.
 /// The `post_kinematic_correction` closure allows for custom vertex corrections after the kinematic update (e.g., collision handling).
+/// External forces accumulated via `state.add_external_force()` are also applied during kinematic update.
 pub fn substep<V, I, F, C, A>(
     params: &XpbdParams,
     state: &mut XpbdState,
@@ -283,7 +308,16 @@ pub fn substep<V, I, F, C, A>(
 
         // Apply damping to velocity
         state.velocities[i] *= damping_factor;
+        
+        // Apply acceleration field (e.g., gravity)
         state.velocities[i] += acceleration_field(vertex) * params.time_substep;
+        
+        // Apply accumulated external forces (F = ma, so a = F/m = F * inv_mass)
+        // External forces are impulses scaled by dt, so we apply them directly to velocity
+        if i < state.external_forces.len() {
+            state.velocities[i] += state.external_forces[i] * vertex.inv_mass * params.time_substep;
+        }
+        
         vertex.position += state.velocities[i] * params.time_substep;
 
         post_kinematic_correction(vertex);
@@ -293,6 +327,7 @@ pub fn substep<V, I, F, C, A>(
         inactive_constraints: &mut state.inactive_constraints,
         vertices,
         constraint_index: 0,
+        rng: &mut state.rng,
     };
     constraint_set.solve(processor, params, initial_value);
 

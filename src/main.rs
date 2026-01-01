@@ -4,7 +4,7 @@ use tracing::{debug, error, info, instrument};
 
 use xpbdrs::{
     interaction,
-    mesh::{self, Spatial},
+    mesh::{self, Spatial, tetrahedral::MeshTearState},
     xpbd::{self, ConstraintSet, XpbdState},
 };
 
@@ -175,15 +175,16 @@ fn handle_input(rl: &RaylibHandle, show_wireframe: &mut bool, show_faces: &mut b
 fn draw_mesh(
     d3: &mut RaylibMode3D<RaylibDrawHandle>,
     mesh: &mesh::Tetrahedral,
-    state: &XpbdState,
+    xpbd_state: &XpbdState,
+    tear_state: &MeshTearState,
     show_wireframe: bool,
     show_faces: bool,
 ) {
     if show_faces {
-        mesh.draw_faces(d3, state, Color::LIGHTGRAY.alpha(0.7));
+        mesh.draw_faces(d3, xpbd_state, tear_state, Color::LIGHTGRAY.alpha(0.7));
     }
     if show_wireframe {
-        mesh.draw_wireframe(d3, state, Color::BLUE);
+        mesh.draw_wireframe(d3, xpbd_state, tear_state, Color::BLUE);
     }
 }
 
@@ -289,7 +290,7 @@ const TARGET_FPS: u16 = 60;
 const TIME_STEP: f32 = 1.0 / TARGET_FPS as f32;
 const N_SUBSTEPS: usize = 30;
 const EDGE_COMPLIANCE: f32 = 0.00001; // Stiffer edges for stability
-const VOLUME_COMPLIANCE: f32 = 0.00;
+const VOLUME_COMPLIANCE: f32 = 0.000000001; // Stiffer volumes for stability
 
 /// Mutable simulation state for live parameter tuning.
 struct SimParams {
@@ -320,9 +321,9 @@ impl Default for SimParams {
             shuffle_buffer_size: usize::MAX, // Full shuffle by default
             paused: false,
             should_reset: false,
-            interaction_force: 40000.0,  // Much lower force
-            interaction_radius: 0.02,
-            stretch_threshold: 1.15,      // Break when stretched to 115% of original
+            interaction_force: 0.2,  
+            interaction_radius: 0.01,
+            stretch_threshold: 1.35,      // Break when stretched to 135% of original
             compression_threshold: 0.6,  // Break when compressed to 60% of original
         }
     }
@@ -338,9 +339,14 @@ impl SimParams {
             volume_compliance: self.volume_compliance,
             damping: self.damping,
             shuffle_buffer_size: self.shuffle_buffer_size,
-            constant_field: Vector3::new(0.0, self.gravity, 0.0),
             ..Default::default()
         }
+    }
+    
+    /// Get gravity as an acceleration field closure.
+    fn gravity_field(&self) -> impl Fn(&mesh::Vertex) -> Vector3 {
+        let gravity = self.gravity;
+        move |_: &mesh::Vertex| Vector3::new(0.0, gravity, 0.0)
     }
 }
 
@@ -366,12 +372,14 @@ fn run_simulation(mesh_path: Option<&str>) {
         XpbdState::new(
             m.vertices.len(),
             m.constraints.edges.len() + m.constraints.tetrahedra.len(),
-            m.faces.len(),
         )
+    });
+    let mut tear_state = mesh.as_ref().map(|m| {
+        MeshTearState::with_adjacency(&m.faces, &m.constraints.edges)
     });
 
     // Track active interaction ray for visualization
-    let mut active_ray: Option<interaction::CylindricalRay> = None;
+    let mut active_ray: Option<interaction::CylindricalRay>;
 
     while !rl.window_should_close() {
         handle_input(&rl, &mut show_wireframe, &mut show_faces, &mut sim_params);
@@ -385,8 +393,8 @@ fn run_simulation(mesh_path: Option<&str>) {
                     state = Some(XpbdState::new(
                         m.vertices.len(),
                         m.constraints.edges.len() + m.constraints.tetrahedra.len(),
-                        m.faces.len(),
                     ));
+                    tear_state = Some(MeshTearState::with_adjacency(&m.faces, &m.constraints.edges));
                 }
             }
             sim_params.should_reset = false;
@@ -412,10 +420,9 @@ fn run_simulation(mesh_path: Option<&str>) {
             // Store for visualization
             active_ray = Some(cyl_ray);
 
-            if let (Some(mesh), Some(st), Some(initial_vals), Some(ray)) = (
+            if let (Some(mesh), Some(st), Some(ray)) = (
                 &mut mesh,
                 &mut state,
-                &initial_values,
                 &active_ray,
             ) {
                 // Compute interaction effect
@@ -425,16 +432,8 @@ fn run_simulation(mesh_path: Option<&str>) {
                     sim_params.interaction_force,
                 );
 
-                // Apply forces to affected vertices
-                st.apply_interaction_force(&effect);
-
-                // Break springs that exceed stretch or compression thresholds
-                mesh.tear_edges(
-                    st,
-                    initial_vals,
-                    sim_params.stretch_threshold,
-                    sim_params.compression_threshold,
-                );
+                // Apply forces through the solver's force interface (proper physics integration)
+                st.apply_interaction_effect(&effect);
             }
         } else {
             active_ray = None;
@@ -442,16 +441,32 @@ fn run_simulation(mesh_path: Option<&str>) {
 
         // Only step simulation if not paused
         if !sim_params.paused {
-            if let Some(mesh) = &mut mesh {
-                let current_state = state.take().unwrap();
+            if let (Some(mesh), Some(st), Some(ts), Some(initial_vals)) = (
+                &mut mesh,
+                &mut state,
+                &mut tear_state,
+                &initial_values,
+            ) {
+                let current_state = st.clone();
                 let xpbd_params = sim_params.to_xpbd_params();
-                state = Some(xpbd::step_basic(
+                let gravity_field = sim_params.gravity_field();
+                *st = xpbd::step_basic(
                     &xpbd_params,
                     current_state,
                     mesh,
-                    initial_values.as_ref().unwrap(),
+                    initial_vals,
                     |v| v.position.y = v.position.y.max(0.0), // ground at y=0
-                ));
+                    gravity_field,
+                );
+                
+                // Check and break overstretched/compressed edges every frame
+                mesh.tear_edges(
+                    st,
+                    ts,
+                    initial_vals,
+                    sim_params.stretch_threshold,
+                    sim_params.compression_threshold,
+                );
             }
         }
 
@@ -470,33 +485,43 @@ fn run_simulation(mesh_path: Option<&str>) {
             d3.draw_grid(20, 2.0);
 
             // Draw mesh if loaded
-            if let (Some(mesh), Some(st)) = (&mesh, &state) {
-                draw_mesh(&mut d3, mesh, st, show_wireframe, show_faces);
+            if let (Some(mesh), Some(st), Some(ts)) = (&mesh, &state, &tear_state) {
+                draw_mesh(&mut d3, mesh, st, ts, show_wireframe, show_faces);
             }
 
             // Draw interaction ray cylinder when active
             if let Some(ray) = &active_ray {
-                let ray_length = 100.0; // Draw ray extending far into scene
-                let end_point = ray.ray.origin + ray.ray.direction * ray_length;
+                let ray_length = 50.0; // Draw ray extending into scene
                 
-                // Draw cylinder as multiple rings along the ray
-                let num_segments = 20;
-                for i in 0..num_segments {
-                    let t = i as f32 / num_segments as f32;
+                // Find perpendicular vectors to the ray direction
+                let up = if ray.ray.direction.y.abs() < 0.9 {
+                    Vector3::new(0.0, 1.0, 0.0)
+                } else {
+                    Vector3::new(1.0, 0.0, 0.0)
+                };
+                let right = ray.ray.direction.cross(up).normalized();
+                let actual_up = right.cross(ray.ray.direction).normalized();
+                
+                // Draw multiple lines along the cylinder surface
+                let num_lines = 8;
+                for i in 0..num_lines {
+                    let angle = (i as f32 / num_lines as f32) * std::f32::consts::TAU;
+                    let offset = (right * angle.cos() + actual_up * angle.sin()) * ray.radius;
+                    
+                    let start = ray.ray.origin + offset;
+                    let end = ray.ray.origin + ray.ray.direction * ray_length + offset;
+                    
+                    d3.draw_line_3D(start, end, Color::RED);
+                }
+                
+                // Draw center line of the ray (thicker by drawing multiple times)
+                let end_point = ray.ray.origin + ray.ray.direction * ray_length;
+                d3.draw_line_3D(ray.ray.origin, end_point, Color::YELLOW);
+                
+                // Draw circles at start and a few points along
+                let ring_segments = 16;
+                for t in [0.0, 0.25, 0.5, 0.75, 1.0] {
                     let center = ray.ray.origin + ray.ray.direction * (ray_length * t);
-                    
-                    // Draw a ring (circle) at each position
-                    // We need to find perpendicular vectors to the ray direction
-                    let up = if ray.ray.direction.y.abs() < 0.9 {
-                        Vector3::new(0.0, 1.0, 0.0)
-                    } else {
-                        Vector3::new(1.0, 0.0, 0.0)
-                    };
-                    let right = ray.ray.direction.cross(up).normalized();
-                    let actual_up = right.cross(ray.ray.direction).normalized();
-                    
-                    // Draw ring as line segments
-                    let ring_segments = 16;
                     for j in 0..ring_segments {
                         let angle1 = (j as f32 / ring_segments as f32) * std::f32::consts::TAU;
                         let angle2 = ((j + 1) as f32 / ring_segments as f32) * std::f32::consts::TAU;
@@ -504,12 +529,9 @@ fn run_simulation(mesh_path: Option<&str>) {
                         let p1 = center + (right * angle1.cos() + actual_up * angle1.sin()) * ray.radius;
                         let p2 = center + (right * angle2.cos() + actual_up * angle2.sin()) * ray.radius;
                         
-                        d3.draw_line_3D(p1, p2, Color::RED.alpha(0.5));
+                        d3.draw_line_3D(p1, p2, Color::RED);
                     }
                 }
-                
-                // Draw center line of the ray
-                d3.draw_line_3D(ray.ray.origin, end_point, Color::YELLOW);
             }
         }
 

@@ -48,13 +48,15 @@ impl ConstraintSet<Vec<Vertex>, TriConstraintValues> for TriConstraints {
         params: &crate::xpbd::XpbdParams,
         reference: &TriConstraintValues,
     ) {
+        let dt_squared = params.time_substep * params.time_substep;
         let _ = processor
             .process(
                 self.edges
                     .iter()
                     .zip(reference.edge_lengths.iter().copied()),
                 params.l_threshold_length,
-                params.length_compliance / (params.time_substep * params.time_substep),
+                params.length_compliance / dt_squared,
+                dt_squared,
                 params.shuffle_buffer_size,
             )
             .process(
@@ -62,7 +64,8 @@ impl ConstraintSet<Vec<Vertex>, TriConstraintValues> for TriConstraints {
                     .iter()
                     .zip(reference.weak_bending_lengths.iter().copied()),
                 1.1 * params.l_threshold_length, // stronger
-                0.9 * params.length_compliance / (params.time_substep * params.time_substep), // stiffer
+                0.9 * params.length_compliance / dt_squared, // stiffer
+                dt_squared,
                 params.shuffle_buffer_size,
             );
     }

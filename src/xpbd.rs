@@ -18,6 +18,8 @@ pub struct XpbdState {
     inactive_constraints: BitVec,
     /// Vector to store old positions during substeps.
     position_buffer: Vec<Vec3>,
+    /// Lagrange multipliers for constraints
+    contraint_lambdas: Vec<f32>,
 }
 
 impl XpbdState {
@@ -79,13 +81,20 @@ impl XpbdState {
             velocities: vec![Vec3::ZERO; n_vertices],
             position_buffer: vec![Vec3::ZERO; n_vertices],
             inactive_constraints: BitVec::repeat(false, n_constraints),
+            contraint_lambdas: vec![0.0; n_constraints],
         }
+    }
+
+    /// Set all constraint Lagrange multipliers to zero.
+    pub fn zero_lambda(&mut self) {
+        self.contraint_lambdas.fill(0.0);
     }
 }
 
 /// Helper struct to solve constraints
 pub struct ConstraintProcessor<'solver, V: IndexMut<VertexId, Output = Vertex>> {
     inactive_constraints: &'solver mut BitVec,
+    constraint_lambdas: &'solver mut [f32],
     vertices: &'solver mut V,
     constraint_index: usize,
 }
@@ -113,8 +122,11 @@ impl<V: IndexMut<VertexId, Output = Vertex>> ConstraintProcessor<'_, V> {
                 let current_index = base_index + i;
                 if !self.inactive_constraints[current_index] {
                     let result = constraint.value_and_grad(self.vertices);
-                    if apply_constraint(result, ref_value, alpha, self.vertices).abs() > l_threshold
-                    {
+                    let lambda = &mut self.constraint_lambdas[current_index];
+                    let d_lambda =
+                        apply_constraint(result, ref_value, *lambda, alpha, self.vertices);
+                    *lambda += d_lambda;
+                    if lambda.abs() > l_threshold {
                         self.inactive_constraints.set(current_index, true);
                     }
                 }
@@ -138,6 +150,7 @@ where
     F: FnMut(&mut Vertex),
 {
     let acceleration_due_to_gravity = |_: &Vertex| Vec3::new(0.0, -9.81, 0.0);
+    state.zero_lambda();
     for _ in 0..params.n_substeps {
         substep(
             params,
@@ -195,6 +208,7 @@ pub fn substep<V, I, F, C, A>(
 
     let processor = ConstraintProcessor {
         inactive_constraints: &mut state.inactive_constraints,
+        constraint_lambdas: &mut state.contraint_lambdas,
         vertices,
         constraint_index: 0,
     };

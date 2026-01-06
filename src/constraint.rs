@@ -36,13 +36,14 @@ pub trait Constraint<const ARITY: usize> {
 pub fn apply_constraint<const N: usize, V>(
     vag: ValueGrad<N>,
     reference_value: f32,
+    lambda: f32,
     alpha: f32,
     vertices: &mut V,
 ) -> f32
 where
     V: IndexMut<VertexId, Output = Vertex>,
 {
-    let lambda = (reference_value - vag.value)
+    let d_lambda = (reference_value - vag.value - alpha * lambda)
         / (alpha
             + vag
                 .grad
@@ -54,9 +55,9 @@ where
     for (i, vertex_id) in vag.participants.into_iter().enumerate() {
         let grad = vag.grad[i];
         let vertex = &mut vertices[vertex_id];
-        vertex.position += grad * vertex.inv_mass * lambda;
+        vertex.position += grad * vertex.inv_mass * d_lambda;
     }
-    lambda
+    d_lambda
 }
 
 /// Binary edge constraint.

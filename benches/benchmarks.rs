@@ -62,11 +62,11 @@ fn constraint_application(c: &mut Criterion) {
             |mut vertices| {
                 if !mesh.constraints.edges.is_empty() {
                     let vag = mesh.constraints.edges[0].value_and_grad(&vertices);
-                    black_box(apply_constraint(vag, 0.1, 0.01, &mut vertices));
+                    black_box(apply_constraint(vag, 0.1, 0.0, 0.01, &mut vertices));
                 }
                 if !mesh.constraints.tetrahedra.is_empty() {
                     let vag = mesh.constraints.tetrahedra[0].value_and_grad(&vertices);
-                    black_box(apply_constraint(vag, 0.01, 0.01, &mut vertices));
+                    black_box(apply_constraint(vag, 0.01, 0.0, 0.01, &mut vertices));
                 }
             },
             BatchSize::SmallInput,
@@ -83,11 +83,11 @@ fn constraint_solving_iteration(c: &mut Criterion) {
             |mut vertices| {
                 for edge in &mesh.constraints.edges {
                     let vag = edge.value_and_grad(&vertices);
-                    black_box(apply_constraint(vag, 0.1, 0.01, &mut vertices));
+                    black_box(apply_constraint(vag, 0.1, 0.0, 0.01, &mut vertices));
                 }
                 for tet in &mesh.constraints.tetrahedra {
                     let vag = tet.value_and_grad(&vertices);
-                    black_box(apply_constraint(vag, 0.01, 0.01, &mut vertices));
+                    black_box(apply_constraint(vag, 0.01, 0.0, 0.01, &mut vertices));
                 }
             },
             BatchSize::SmallInput,
@@ -184,6 +184,44 @@ fn kinematic_integration(c: &mut Criterion) {
     });
 }
 
+// Memory access pattern benchmarks
+fn memory_access_patterns(c: &mut Criterion) {
+    let mesh = load_test_mesh();
+
+    // Sequential vertex access
+    c.bench_function("sequential_vertex_access", |b| {
+        b.iter(|| {
+            let mut sum = Vec3::ZERO;
+            for vertex in &mesh.vertices {
+                sum += vertex.position;
+            }
+            black_box(sum);
+        })
+    });
+
+    // Constraint-driven vertex access (follows edge connectivity)
+    c.bench_function("constraint_vertex_access", |b| {
+        b.iter(|| {
+            for edge in &mesh.constraints.edges {
+                let v1 = &mesh.vertices[edge.0];
+                let v2 = &mesh.vertices[edge.1];
+                black_box((v1.position, v2.position));
+            }
+        })
+    });
+
+    // Mesh cloning cost (memory allocation)
+    c.bench_function("mesh_clone_cost", |b| {
+        b.iter_batched(
+            || &mesh,
+            |mesh| {
+                black_box(mesh.vertices.clone());
+            },
+            BatchSize::SmallInput,
+        )
+    });
+}
+
 criterion_group!(
     benches,
     edge_constraint_computation,
@@ -193,6 +231,7 @@ criterion_group!(
     xpbd_substep,
     xpbd_full_step,
     kinematic_integration,
+    memory_access_patterns,
 );
 
 criterion_main!(benches);
